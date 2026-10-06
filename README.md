@@ -65,6 +65,8 @@ O projeto inclui `vercel.json` com o preset Go e região São Paulo (`gru1`). A 
 
 As dependências estão incluídas em `vendor` para o build não depender do download dos módulos. Depois de atualizar `go.mod`/`go.sum`, execute `go mod vendor` e inclua a atualização no Git.
 
+O build usa `-buildvcs=false` porque o checkout preparado pela Vercel não mantém todos os metadados Git necessários ao stamping do Go. O commit de origem continua identificado pela própria plataforma.
+
 A [prévia pública da mesa 8](https://mezo-demo.vercel.app/#mesa) mostra a interface com dados fictícios. Os arquivos de seu QR code estão em `docs/qr`; a placa identifica que é uma prévia. Esse QR não representa uma mesa de um restaurante em produção.
 
 O PostgreSQL precisa ficar em um serviço externo que permita criar bancos e usuários e conectar diretamente a cada banco. A credencial provisionadora precisa de `CREATEDB`, `CREATEROLE` e permissão para administrar os usuários que cria. PostgreSQL 17 é a versão verificada. Não use a URL do banco local nem envie a pasta `databases` para a Vercel. Em um serviço gerenciado, o provedor administra a pasta física comum do PostgreSQL.

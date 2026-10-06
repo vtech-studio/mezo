@@ -1,5 +1,10 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "go",
-  "regions": ["gru1"]
+  "regions": ["gru1"],
+  "build": {
+    "env": {
+      "GO_BUILD_FLAGS": "-buildvcs=false -trimpath -ldflags '-s -w'"
+    }
+  }
 }
