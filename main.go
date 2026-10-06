@@ -104,7 +104,7 @@ func (a *App) router() *echo.Echo {
 		}
 		return c.JSON(200, map[string]string{"status": "ok", "app": "Mezô"})
 	})
-	for _, name := range []string{"styles.css", "app.js", "backend.js", "favicon.svg", "admin.css", "htmx.min.js", "workstation.css", "workstation.js"} {
+	for _, name := range []string{"styles.css", "app.js", "backend.js", "favicon.svg", "admin.css", "admin.js", "htmx.min.js", "workstation.css", "workstation.js"} {
 		name := name
 		e.GET("/"+name, func(c echo.Context) error {
 			b, err := assets.ReadFile("dist/" + name)

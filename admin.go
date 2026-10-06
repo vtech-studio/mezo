@@ -110,7 +110,7 @@ func (a *App) adminPage(c echo.Context) error {
 					release()
 					return e
 				}
-				menu = append(menu, map[string]any{"ID": id, "Name": name, "Price": price, "Active": active})
+				menu = append(menu, map[string]any{"ID": id, "Name": name, "PriceBRL": priceBRL(price), "Active": active})
 			}
 			e = rows.Err()
 			rows.Close()
@@ -285,10 +285,10 @@ func (a *App) editMenuItem(c echo.Context) error {
 	}
 	defer release()
 	name := strings.TrimSpace(c.FormValue("name"))
-	price, err := strconv.Atoi(c.FormValue("price"))
+	price, err := parsePriceBRL(c.FormValue("priceBRL"))
 	active := c.FormValue("active") == "true"
 	if err != nil || name == "" || len(name) > 100 || price < 0 || price > 10000000 {
-		return adminProblem(c, "Confira o nome e o preço em centavos")
+		return adminProblem(c, "Confira o nome e o preço em reais, por exemplo R$ 38,00")
 	}
 	tag, err := p.Exec(c.Request().Context(), "UPDATE menu_items SET name=$2,price=$3,active=$4 WHERE id=$1", c.Param("id"), name, price, active)
 	if err != nil {
@@ -314,9 +314,9 @@ func (a *App) createMenuItem(c echo.Context) error {
 	}
 	defer release()
 	name, category, desc := strings.TrimSpace(c.FormValue("name")), c.FormValue("category"), c.FormValue("description")
-	price, err := strconv.Atoi(c.FormValue("price"))
+	price, err := parsePriceBRL(c.FormValue("priceBRL"))
 	if err != nil || price < 0 || price > 10000000 || name == "" || len(name) > 100 || len(desc) > 500 || !(category == "Entradas" || category == "Principais" || category == "Bebidas" || category == "Sobremesas") {
-		return adminProblem(c, "Confira o item. Preço deve ser um inteiro em centavos, por exemplo 3800 para R$ 38,00.")
+		return adminProblem(c, "Confira o item e o preço em reais, por exemplo R$ 38,00.")
 	}
 	_, err = p.Exec(c.Request().Context(), "INSERT INTO menu_items(id,name,description,price,category) VALUES($1,$2,$3,$4,$5)", randomID(), name, desc, price, category)
 	if err != nil {

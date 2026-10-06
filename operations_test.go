@@ -418,8 +418,12 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	}
 	expect(request("GET", base+"/operations?view=waiter", nil, waiter.cookie, ""), 401)
 	expect(request("POST", base+"/login", map[string]string{"email": "waiter@example.test", "password": password}, nil, ""), 401)
-	w = formRequest("/admin/r/"+tenant.Slug+"/menu/dish", url.Values{"name": {"Novo nome"}, "price": {"3200"}, "active": {"true"}})
+	w = formRequest("/admin/r/"+tenant.Slug+"/menu/dish", url.Values{"name": {"Novo nome"}, "priceBRL": {"R$ 32,00"}, "active": {"true"}})
 	expect(w, 200)
+	var menuPrice int
+	if err = p.QueryRow(ctx, "SELECT price FROM menu_items WHERE id='dish'").Scan(&menuPrice); err != nil || menuPrice != 3200 {
+		t.Fatal("preço em reais não foi convertido corretamente para centavos", menuPrice, err)
+	}
 	// Password rotation revokes other sessions; wrong current passwords never change credentials.
 	expect(request("POST", base+"/password", map[string]string{"current": "wrong", "password": randomID()}, chefs[0].cookie, chefs[0].csrf), 403)
 	newPassword := randomID()

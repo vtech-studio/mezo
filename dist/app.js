@@ -73,7 +73,6 @@ function loadState(){
 }
 const serverMode=!!document.querySelector('meta[name="mezo-runtime"]');
 document.querySelector('.preview-note').hidden=serverMode;
-document.querySelector('.role-switch').hidden=serverMode;
 const tenantSlug=serverMode ? location.pathname.split('/')[2] : '';
 let tableNumber=8, tableSeats=2, staffName='Ana', staffID='', restaurantName='Casa do Sol';
 let tableData=[], liveOrders=[], csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
@@ -109,11 +108,9 @@ function dishArt(type){
 const welcomeArt = `<div class="welcome-art" aria-hidden="true"><svg viewBox="0 0 160 160" fill="none"><path d="M12 134q37-11 85-1t48-3" stroke="#d9cdb7" stroke-width="1.4"/><ellipse cx="87" cy="91" rx="50" ry="32" stroke="currentColor" stroke-width="1.3" transform="rotate(-15 87 91)"/><ellipse cx="87" cy="91" rx="37" ry="23" stroke="currentColor" stroke-width="1" transform="rotate(-15 87 91)"/><path d="M46 148 28 91m-6-20 6 20c5 8 15 4 14-4l-6-20M29 67l6 23M135 125l-6-79c-16 10-16 34 2 34M59 73q6-18 24-13-2 17-24 13Zm-1 4 21-13M98 112q1-18 20-20 1 17-20 20Zm-2 4 18-19" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M68 35c-4-9 5-9 1-18m16 14c-4-9 5-9 1-18" stroke="#b9b49b" stroke-width="1.4" stroke-linecap="round"/><circle cx="107" cy="41" r="3" fill="#b9b49b" stroke="none"/></svg></div>`;
 
 function renderNav(){
-  const pending=state.calls.filter(c=>c.status==='pending').length;
-  const routes=role==='customer' ? [['mesa','table','Minha mesa'],['cardapio','book','Cardápio'],['conta','receipt','Minha conta']] : [['fila','bell','Chamados'],['mesas','table','Mesas'],['historico','history','Histórico']];
-  document.querySelector('#bottom-nav').innerHTML=routes.map(([id,i,label])=>`<a href="#${id}" class="nav-item ${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(i)}${id==='fila'&&pending?`<span class="nav-count">${pending}</span>`:''}<span>${label}</span></a>`).join('');
-  document.querySelectorAll('[data-role]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.role===role)));
-  document.querySelector('.live-label').innerHTML=role==='customer'?'<span></span> Tudo a seu tempo':serverMode&&!liveReady?'Acesso da equipe':`<span></span> Bom atendimento, ${escapeHTML(staffName)}`;
+  const routes=[['mesa','table','Minha mesa'],['cardapio','book','Cardápio'],['conta','receipt','Minha conta']];
+  document.querySelector('#bottom-nav').innerHTML=routes.map(([id,i,label])=>`<a href="#${id}" class="nav-item ${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(i)}<span>${label}</span></a>`).join('');
+  document.querySelector('.live-label').innerHTML='<span></span> Tudo a seu tempo';
 }
 function activityCard(call){
   const reason=reasons.find(r=>r.id===call.reason);
@@ -143,35 +140,15 @@ function renderMenu(){
 function renderBill(){
   main.innerHTML=`<div class="page-heading"><p class="eyebrow">MESA ${tableName(tableNumber)} · ${tableSeats} PESSOAS</p><h1>Foi bom ter você.</h1><p>Sua conta, com tudo bem explicadinho.</p></div><section class="receipt" aria-label="Consumo da mesa"><div class="receipt-head"><strong>O que veio à mesa</strong><small>${receiptItems.reduce((n,i)=>n+i.qty,0)} itens</small></div><div class="receipt-lines">${receiptItems.map(item=>{const d=item.name?item:menu.find(d=>d.id===item.id);return `<div class="receipt-item"><span class="receipt-qty">${item.qty}×</span><div><strong>${escapeHTML(d.name)}</strong><small>${item.qty>1?`${money(d.price)} cada`:'Preparado pela casa'}</small></div><span class="item-price">${money(d.price*item.qty)}</span></div>`;}).join('')}</div><div class="receipt-totals"><div class="total-line"><span>Subtotal</span><span>${money(subtotal())}</span></div><div class="total-line"><label><input type="checkbox" id="service-toggle" ${state.service?'checked':''}> Serviço de 10% <span style="font-size:9px">(opcional)</span></label><span id="service-value">${money(serviceValue())}</span></div><div class="total-line grand"><span>Total da mesa</span><strong id="bill-total">${money(totalValue())}</strong></div></div></section><div class="section-heading"><h2>Como prefere encerrar?</h2></div><button class="primary-button" data-action="payment">Escolher pagamento ${icon('arrow')}</button><p class="payment-caption">${icon('info')} ${serverMode?'Pagamento online em configuração · solicite à equipe':'Pagamento demonstrativo · nenhuma cobrança real'}</p><button class="secondary-button" data-action="ask-bill">${icon('bell')} Prefiro pagar com o garçom</button><footer class="hospitality-note">${icon('heart')} Sua presença fez nosso dia.<span class="powered">mezô</span></footer>`;
 }
-function waiterCard(call){
-  const r=reasons.find(r=>r.id===call.reason);
-  return `<article class="waiter-card ${call.status}" data-call="${escapeHTML(call.id)}"><div class="waiter-card-head"><span class="table-square">${tableName(call.table)}</span><div><h3>Mesa ${tableName(call.table)}</h3><small>${call.table===12?'4':'2'} pessoas · salão principal</small></div><span class="badge ${call.status==='pending'?'amber':''}">${call.status==='pending'?'Aguardando':(!serverMode||call.assignedId===staffID?'Com você':escapeHTML(call.assigned))}</span></div><div class="waiter-message">${r.label}${call.note?`<p class="note">${escapeHTML(call.note)}</p>`:''}</div><p class="call-meta">${icon('clock')} Chamado ${timeLabel(call.created)}${call.status==='progress'?` · assumido por ${escapeHTML(call.assigned || staffName)}`:''}</p><button class="primary-button" data-action="${call.status==='pending'?'accept':'complete'}" data-id="${escapeHTML(call.id)}" ${serverMode&&call.status==='progress'&&call.assignedId!==staffID?'disabled':''}>${icon(call.status==='pending'?'arrow':'check')}${call.status==='pending'?'Assumir atendimento':'Concluir atendimento'}</button></article>`;
-}
-function renderQueue(){
-  const pending=state.calls.filter(c=>c.status==='pending');
-  const progress=state.calls.filter(c=>c.status==='progress'&&(!serverMode||c.assignedId===staffID));
-  const done=state.calls.filter(c=>c.status==='done'&&(!serverMode||c.assignedId===staffID));
-  const calls=state.calls.filter(c=>filter==='all'?['pending','progress'].includes(c.status):c.status===filter&&(!serverMode||filter!=='progress'||c.assignedId===staffID)).sort((a,b)=>a.created-b.created);
-  main.innerHTML=`<div class="page-heading with-action"><div><p class="eyebrow">SEU TURNO · SALÃO PRINCIPAL</p><h1>Bom trabalho, ${escapeHTML(staffName)}.</h1><p>Um atendimento de cada vez, com atenção.</p></div><span class="avatar" aria-label="${escapeHTML(staffName)}">${escapeHTML(staffName.slice(0,1))}</span></div><div class="waiter-summary"><div class="stat"><strong>${pending.length}</strong><small>Na fila</small></div><div class="stat"><strong>${progress.length}</strong><small>Com você</small></div><div class="stat"><strong>${done.length}</strong><small>Concluídos</small></div></div><div class="chips" aria-label="Filtrar chamados">${[['all','Todos'],['pending','Aguardando'],['progress','Com você']].map(([id,label])=>`<button class="chip ${filter===id?'active':''}" data-filter="${id}" aria-pressed="${filter===id}">${label}</button>`).join('')}</div><p class="filter-summary">${calls.length} ${calls.length===1?'atendimento':'atendimentos'} · mais antigos primeiro</p><div class="call-list">${calls.length?calls.map(waiterCard).join(''):`<div class="empty-state">${icon('circleCheck')}<h3>Tudo em dia!</h3><p>${filter==='progress'?'Você ainda não assumiu nenhum chamado.':'Nenhum chamado aguardando nesta fila.'}</p></div>`}</div>`;
-}
-function renderTables(){
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">SALÃO PRINCIPAL</p><h1>Cada mesa importa.</h1><p>Veja quem está esperando por você.</p></div><div class="tables-grid">${(serverMode?tableData.map(t=>t.number):Array.from({length:12},(_,i)=>i+1)).map(n=>{const calls=state.calls.filter(c=>c.table===n&&['pending','progress'].includes(c.status));const occupied=serverMode?!!tableData.find(t=>t.number===n)?.sessionId:[2,3,6,8,10,12].includes(n);return `<button class="table-card ${calls.length?'has-call':''}" data-action="table-details" data-table="${n}"><div class="table-card-head"><strong>${tableName(n)}</strong><span class="badge ${calls.length?'amber':occupied?'':'neutral'}">${calls.length?'Chamado':occupied?'Ocupada':'Livre'}</span></div><p>${calls.length?reasons.find(r=>r.id===calls[0].reason).label:occupied?'Aproveitando a casa':'Pronta para receber'}</p><small>${occupied?`${serverMode?tableData.find(t=>t.number===n)?.seats:n===12?4:2} pessoas`:'—'}${calls.length?` · ${timeLabel(calls[0].created)}`:''}</small></button>`;}).join('')}</div>`;
-}
-function renderHistory(){
-  const done=state.calls.filter(c=>c.status==='done'&&(!serverMode||c.assignedId===staffID)).sort((a,b)=>(b.completed||b.created)-(a.completed||a.created));
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">ATENDIMENTOS DO TURNO</p><h1>Pequenos cuidados.</h1><p>${done.length} ${done.length===1?'atendimento concluído':'atendimentos concluídos'} por você.</p></div><div>${done.length?done.map(c=>`<article class="history-row">${icon('circleCheck')}<div><strong>Mesa ${tableName(c.table)} · ${reasons.find(r=>r.id===c.reason).label}</strong><small>Concluído por ${escapeHTML(c.assigned || staffName)}</small></div><span>${timeLabel(c.completed||c.created)}</span></article>`).join(''):`<div class="empty-state">${icon('history')}<h3>Seu histórico começa aqui</h3><p>Os atendimentos concluídos aparecerão nesta tela.</p></div>`}</div><div class="shift-note">${icon('heart')} Cada chamado atendido faz diferença.</div>`;
-}
 function render(){
   if(serverMode&&!liveReady)return;
   renderNav();
-  const views={mesa:renderHome,cardapio:renderMenu,conta:renderBill,fila:renderQueue,mesas:renderTables,historico:renderHistory};
+  const views={mesa:renderHome,cardapio:renderMenu,conta:renderBill};
   (views[route]||renderHome)();
 }
 async function navigate(next,focus=false){
-  const isWaiter=['fila','mesas','historico'].includes(next);
-  if(serverMode&&isWaiter){location.href=`/r/${encodeURIComponent(tenantSlug)}/garcom`;return;}
-  role=isWaiter?'waiter':'customer';
-  route=['mesa','cardapio','conta','fila','mesas','historico'].includes(next)?next:'mesa';
+  route=['mesa','cardapio','conta'].includes(next)?next:'mesa';
+  if(next && next!==route)history.replaceState(null,'','#mesa');
   if(serverMode){
     liveReady=false;
     main.innerHTML='<div class="empty-state"><h3>Preparando seu lugar…</h3><p>Conectando ao restaurante.</p></div>';
@@ -221,33 +198,17 @@ function simulatePayment(){
   if(!selectedMethod)return;
   openSheet('Prévia do pagamento',`<div class="success-body"><div class="success-illustration">${icon(selectedMethod==='pix'?'pix':'card')}</div><h2>Tudo pronto por aqui.</h2><p>Esta seria a etapa de pagamento por ${selectedMethod==='pix'?'Pix':'cartão'}. A integração será feita depois.</p></div><div class="success-detail"><div class="total-line"><span>Total da mesa</span><strong>${money(totalValue())}</strong></div><div class="total-line"><span>Forma escolhida</span><strong>${selectedMethod==='pix'?'Pix':'Cartão de crédito'}</strong></div></div><div class="demo-info">${icon('info')}<span>Sua conta permanece aberta. Nenhum pagamento foi realizado.</span></div><button class="primary-button" data-action="close-sheet">Voltar para minha conta</button>`);
 }
-async function callStatus(action,id){
-  if(serverMode){try{await api(`/calls/${encodeURIComponent(id)}/${action}`,{});await refreshLive();render();toast(action==='accept'?'Atendimento com você.':'Atendimento concluído.');}catch(e){toast(e.message);await refreshLive().catch(()=>{});render();}return;}
-  state=loadState();
-  const call=state.calls.find(c=>c.id===id);
-  if(!call)return;
-  if(action==='accept'&&call.status==='pending'){call.status='progress';call.accepted=Date.now();saveState();render();toast(`Mesa ${tableName(call.table)}: atendimento com você.`);}
-  else if(action==='complete'&&call.status==='progress'){call.status='done';call.completed=Date.now();saveState();render();toast(`Mesa ${tableName(call.table)}: atendimento concluído.`);}
-  else {render();toast('Esse atendimento já foi atualizado.');}
-}
-function openTableDetails(n){
-  if(serverMode){openLiveTable(n);return;}
-  const calls=state.calls.filter(c=>c.table===n&&['pending','progress'].includes(c.status));
-  openSheet(`Mesa ${tableName(n)}`,calls.length?`<p class="sheet-description">${calls.length} ${calls.length===1?'chamado ativo':'chamados ativos'} nesta mesa.</p><div class="call-list">${calls.map(waiterCard).join('')}</div>`:`<div class="empty-state" style="margin-bottom:12px">${icon('circleCheck')}<h3>Nenhum chamado ativo.</h3><p>O atendimento desta mesa está em dia.</p></div><button class="primary-button" data-action="close-sheet">Tudo certo</button>`);
-}
 function openOptions(){
-  if(serverMode){openSheet('Mezô · à sua mesa',`<p class="sheet-description">${escapeHTML(restaurantName)}<br>Seu atendimento e sua conta acompanham esta mesa.</p><div class="option-list"><button data-action="switch-role">${icon('people')} ${role==='customer'?'Entrar como equipe':'Ver minha mesa'}</button>${role==='waiter'?`<button data-action="logout">${icon('lock')} Sair da equipe</button>`:''}<a href="/admin">Administração Mezô →</a></div>`);return;}
-  openSheet('À vontade, sempre.',`<p class="sheet-description">Casa do Sol · cozinha & boa companhia.<br>Estamos aqui para cuidar da sua experiência.</p><div class="option-list"><button data-action="about">${icon('info')} Sobre esta prévia</button><button data-action="switch-role">${icon('people')} ${role==='customer'?'Ver painel do garçom':'Voltar para a visão do cliente'}</button><button data-action="reset-confirm">${icon('reset')} Reiniciar demonstração</button></div>`);
+  if(serverMode){openSheet('Mezô · à sua mesa',`<p class="sheet-description">${escapeHTML(restaurantName)}<br>Seu atendimento e sua conta acompanham esta mesa.</p><button class="primary-button" data-action="close-sheet">Tudo certo ${icon('check')}</button>`);return;}
+  openSheet('À vontade, sempre.',`<p class="sheet-description">Casa do Sol · cozinha & boa companhia.<br>Estamos aqui para cuidar da sua experiência.</p><div class="option-list"><button data-action="about">${icon('info')} Sobre esta prévia</button><button data-action="reset-confirm">${icon('reset')} Reiniciar demonstração</button></div>`);
 }
+
 document.addEventListener('click',async event=>{
   const target=event.target.closest('button, a');if(!target)return;
-  if(target.dataset.role){closeSheet();location.hash=target.dataset.role==='waiter'?'fila':'mesa';return;}
   if(target.dataset.reason){selectedReason=target.dataset.reason;sheet.querySelectorAll('[data-reason]').forEach(b=>{b.classList.toggle('selected',b.dataset.reason===selectedReason);b.setAttribute('aria-pressed',String(b.dataset.reason===selectedReason));});return;}
   if(target.dataset.category){category=target.dataset.category;document.querySelectorAll('[data-category]').forEach(b=>{b.classList.toggle('active',b.dataset.category===category);b.setAttribute('aria-pressed',String(b.dataset.category===category));});menuList();return;}
-  if(target.dataset.filter){filter=target.dataset.filter;renderQueue();return;}
   if(target.dataset.method){selectedMethod=target.dataset.method;sheet.querySelectorAll('[data-method]').forEach(b=>{b.classList.toggle('selected',b.dataset.method===selectedMethod);b.setAttribute('aria-pressed',String(b.dataset.method===selectedMethod));});const b=sheet.querySelector('[data-action="simulate-payment"]');b.disabled=false;b.innerHTML=`Ver prévia com ${selectedMethod==='pix'?'Pix':'cartão'} ${icon('arrow')}`;return;}
   const action=target.dataset.action;
-  if(serverMode&&['login','logout','consumption','close-table','confirm-close','open-table'].includes(action)){event.preventDefault();await liveAction(action,target);return;}
   if(action==='call')openCall();
   else if(action==='close-sheet')closeSheet();
   else if(action==='send-call')sendCall();
@@ -256,11 +217,8 @@ document.addEventListener('click',async event=>{
   else if(action==='payment')openPayment();
   else if(action==='simulate-payment')simulatePayment();
   else if(action==='ask-bill')openCall('bill');
-  else if(action==='accept'||action==='complete'){const inSheet=sheet.contains(target);callStatus(action,target.dataset.id);if(inSheet)closeSheet();}
-  else if(action==='table-details')openTableDetails(Number(target.dataset.table));
   else if(action==='clear-search'){query='';category='Todos';renderMenu();}
-  else if(action==='switch-role'){closeSheet();location.hash=role==='customer'?'fila':'mesa';}
-  else if(action==='about')openSheet('Uma mesa para experimentar.',`<p class="sheet-description">Esta interface usa o restaurante fictício Casa do Sol. Os pratos, valores, mesas e atendimentos são exemplos.</p><div class="demo-info">${icon('info')}<span>Chamados são simulados neste navegador. Nenhuma equipe real recebe notificações e nenhum pagamento é processado.</span></div><p class="sheet-description">Explore a visão do cliente e do garçom para acompanhar um chamado do início ao fim.</p><button class="primary-button" data-action="close-sheet">Vamos experimentar</button>`);
+  else if(action==='about')openSheet('Uma mesa para experimentar.',`<p class="sheet-description">Esta interface usa o restaurante fictício Casa do Sol. Os pratos, valores, mesas e atendimentos são exemplos.</p><div class="demo-info">${icon('info')}<span>Chamados são simulados neste navegador. Nenhuma equipe real recebe notificações e nenhum pagamento é processado.</span></div><p class="sheet-description">Explore o cardápio, os chamados e a conta da mesa.</p><button class="primary-button" data-action="close-sheet">Vamos experimentar</button>`);
   else if(action==='reset-confirm')openSheet('Começar de novo?',`<p class="sheet-description">Os chamados criados nesta demonstração serão apagados e os exemplos iniciais voltarão.</p><div class="button-row"><button class="secondary-button" data-action="close-sheet">Manter como está</button><button class="primary-button" data-action="reset">Reiniciar</button></div>`);
   else if(action==='reset'){state=seedState();saveState();query='';category='Todos';filter='all';closeSheet();if(location.hash==='#mesa')navigate('mesa',true);else location.hash='mesa';toast('Demonstração reiniciada.');}
 });
@@ -279,4 +237,4 @@ window.addEventListener('hashchange',()=>navigate(location.hash.slice(1),true));
 window.addEventListener('storage',event=>{if(!serverMode&&event.key===storageKey){state=loadState();render();}});
 setInterval(()=>{if(!sheet.open&&document.activeElement?.tagName!=='INPUT'&&document.activeElement?.tagName!=='TEXTAREA')render();},60000);
 document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
-navigate(location.hash.slice(1)||(serverMode&&location.pathname.endsWith('/equipe')?'fila':'mesa'));
+navigate(location.hash.slice(1)||'mesa');
