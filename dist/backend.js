@@ -7,6 +7,7 @@ async function api(path,body){
 async function refreshLive(){
   const data=await api(`/bootstrap?role=${role==='waiter'?'staff':'customer'}`);
   csrf=data.csrf;restaurantName=data.restaurant.name;menu=data.menu;state={calls:data.calls,service:data.service??true};
+  liveOrders=data.orders||[];
   liveTransport=data.realtime||'events';
   if(data.table){tableNumber=data.table.number;tableSeats=data.table.seats;receiptItems=data.items;liveTotals=data.totals;}
   if(data.staff){staffName=data.staff.name;staffID=data.staff.id;tableData=data.tables;}

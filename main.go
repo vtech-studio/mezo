@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,6 +71,9 @@ func (a *App) router() *echo.Echo {
 			c.Response().Header().Set("X-Content-Type-Options", "nosniff")
 			c.Response().Header().Set("Referrer-Policy", "no-referrer")
 			c.Response().Header().Set("Cache-Control", "no-store")
+			if a.cfg.Secure {
+				c.Response().Header().Set("Strict-Transport-Security", "max-age=31536000")
+			}
 			c.Response().Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 			return next(c)
 		}
@@ -100,7 +104,7 @@ func (a *App) router() *echo.Echo {
 		}
 		return c.JSON(200, map[string]string{"status": "ok", "app": "Mezô"})
 	})
-	for _, name := range []string{"styles.css", "app.js", "backend.js", "favicon.svg", "admin.css", "htmx.min.js"} {
+	for _, name := range []string{"styles.css", "app.js", "backend.js", "favicon.svg", "admin.css", "htmx.min.js", "workstation.css", "workstation.js"} {
 		name := name
 		e.GET("/"+name, func(c echo.Context) error {
 			b, err := assets.ReadFile("dist/" + name)
@@ -108,7 +112,7 @@ func (a *App) router() *echo.Echo {
 				return echo.ErrNotFound
 			}
 			mime := "text/javascript; charset=utf-8"
-			if name == "styles.css" || name == "admin.css" {
+			if strings.HasSuffix(name, ".css") {
 				mime = "text/css; charset=utf-8"
 			}
 			if name == "favicon.svg" {
@@ -120,6 +124,14 @@ func (a *App) router() *echo.Echo {
 	e.GET("/", a.home)
 	e.GET("/r/:slug/m/:token", a.enterTable)
 	e.GET("/r/:slug/equipe", a.staffPage)
+	e.GET("/r/:slug/garcom", a.workstationPage)
+	e.GET("/r/:slug/cozinha", a.workstationPage)
+	e.GET("/api/r/:slug/operations", a.operations)
+	e.GET("/api/r/:slug/tables/:number/bill", a.tableBill)
+	e.GET("/api/r/:slug/receipts", a.receipts)
+	e.POST("/api/r/:slug/orders", a.createOrder)
+	e.POST("/api/r/:slug/orders/:id/:action", a.updateOrder)
+	e.POST("/api/r/:slug/password", a.changeStaffPassword, loginLimit)
 	e.GET("/api/r/:slug/bootstrap", a.bootstrap)
 	e.POST("/api/r/:slug/login", a.staffLogin, loginLimit)
 	e.POST("/api/r/:slug/logout", a.logout)
@@ -135,6 +147,8 @@ func (a *App) router() *echo.Echo {
 	e.POST("/admin/logout", a.adminLogout)
 	e.POST("/admin/restaurants", a.createRestaurant)
 	e.POST("/admin/r/:slug/staff", a.createStaff)
+	e.POST("/admin/r/:slug/staff/:id/active", a.setStaffActive)
+	e.POST("/admin/r/:slug/menu/:id", a.editMenuItem)
 	e.POST("/admin/r/:slug/menu", a.createMenuItem)
 	e.GET("/admin/r/:slug/qr/:number", a.tableQR)
 	return e

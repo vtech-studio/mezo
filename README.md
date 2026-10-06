@@ -1,6 +1,6 @@
 # Mezô · à sua mesa
 
-Aplicação para atendimento de restaurantes pelo celular. Monólito Go + Echo, PostgreSQL 17, pgx, migrações Goose e painel administrativo com html/template + HTMX. A interface da mesa e da equipe preserva o protótipo existente e usa a API Go e eventos SSE.
+Aplicação para atendimento de restaurantes pelo celular. Monólito Go + Echo, PostgreSQL 17, pgx, migrações Goose e painel administrativo com html/template + HTMX. Cliente, garçom e cozinha possuem interfaces próprias conectadas à API. Consulte o [roteiro para o primeiro piloto](docs/PRIMEIRO-PILOTO.md).
 
 ## Experimentar neste computador
 
@@ -39,11 +39,13 @@ O catálogo e as permissões são criados pelo provisionador configurado em DATA
 ## Fluxos funcionando
 
 - Cliente entra por `/r/<restaurante>/m/<token-aleatorio-da-mesa>`, a mesma URL usada no QR code e etiqueta NFC. A equipe abre e encerra as sessões da mesa.
-- Equipe entra por `/r/<restaurante>/equipe`, com login exclusivo daquele restaurante.
+- Garçom entra por `/r/<restaurante>/garcom`; cozinha por `/r/<restaurante>/cozinha`. `/equipe` redireciona ao salão. Cada pessoa usa seu próprio login, limitado ao restaurante e à função; o responsável acessa ambas as áreas.
 - Chamados ficam no banco, entram na fila por idade e atualizam a interface via SSE. Todos os chamados ativos são retornados junto dos 100 atendimentos encerrados mais recentes. Apenas um atendente consegue assumir cada chamado e somente ele pode concluí-lo. Chamados ativos repetidos do mesmo motivo não são duplicados.
-- A equipe registra consumo confirmado. Nome e preço são copiados do cardápio no servidor e preservados na conta. O cliente acompanha subtotal, serviço opcional e total calculados em centavos no backend.
+- O garçom envia itens, quantidades e observações à cozinha. A cozinha assume o preparo e marca como pronto; o garçom confirma a entrega. O mesmo identificador de envio não duplica pedido ou consumo. Preços e nomes ficam salvos no pedido e na conta, mesmo após alterações no cardápio.
+- Apenas o responsável cancela pedidos não entregues, com motivo obrigatório e registro de auditoria. O consumo cancelado é retirado da conta. O cliente acompanha os pedidos, subtotal, serviço opcional e total calculados em centavos no backend.
+- Encerrar a mesa exige resolver os pedidos pendentes, conferir o total e confirmar o pagamento presencial. Dinheiro, Pix conferido no banco e cartão na maquininha são registrados; o aplicativo não processa essas transações. O responsável consulta recebimentos do dia e exporta CSV pelo menu de seu acesso.
 - Encerrar a conta presencial invalida o acesso àquela sessão. Reabrir a mesa cria uma conta nova, sem consumo ou chamados da conta anterior.
-- Administradores da plataforma cadastram restaurantes, atendentes e itens do cardápio e geram QR codes localmente, sem enviar links para serviços externos.
+- Administradores cadastram restaurantes e equipe com função, editam preços/disponibilidade, desativam acessos e geram QR codes. A equipe pode trocar a senha; os acessos anteriores são revogados. Tentativas de login são limitadas também no banco, entre instâncias da Vercel.
 
 ## Docker e hospedagem
 
@@ -58,6 +60,8 @@ O PostgreSQL não expõe porta externa. Todos os bancos ficam no bind mount `./d
 Para hospedar o backend, use uma VPS com Docker/PostgreSQL e proxy HTTPS, por exemplo Caddy, direcionado para `127.0.0.1:4173`. Configure APP_ORIGIN com o domínio HTTPS antes de imprimir placas: os QR codes usam essa origem e os cookies passam a usar Secure. Uma instância Go atende o SSE desta versão. Para várias réplicas, substitua o hub em memória por eventos compartilhados, por exemplo PostgreSQL LISTEN/NOTIFY.
 
 Faça backup de cada banco e do catálogo com `pg_dump`, dos usuários/permissões com `pg_dumpall --globals-only` e guarde APP_SECRET junto dos segredos de recuperação. Copiar a pasta de um PostgreSQL em execução não substitui um backup consistente. `.env`, LOCAL-ACCESS.md e `databases` estão excluídos do Git e da imagem.
+
+O comando `go run ./cmd/backup -postgres-bin 'C:\Program Files\PostgreSQL\17\bin' -out backups` gera um arquivo de cada banco ativo e um manifesto com SHA-256, sem expor senhas em argumentos. `-verify-local` restaura os arquivos em bancos temporários no PostgreSQL local e compara os registros. Esse modo recusa hosts remotos. Guarde os backups fora do Git e preserve APP_SECRET; veja os limites e a recuperação no roteiro do piloto.
 
 ## Vercel
 
@@ -118,7 +122,13 @@ O teste de integração cria dois restaurantes temporários no cluster configura
 
 ## Estado da integração
 
-O backend funciona localmente. Pix/cartão dependem de provedor, contas recebedoras por restaurante e webhooks; a interface informa que o pagamento online está em configuração e permite chamar a equipe. SSE atualiza páginas abertas. Push com a página fechada ainda não foi integrado. A equipe comunica pedidos à cozinha presencialmente; não há sistema de cozinha nesta etapa.
+O backend está publicado na Vercel com PostgreSQL no Supabase. Salão e cozinha trocam pedidos persistidos; a Vercel consulta atualizações a cada cinco segundos com a tela aberta. Localmente, o cliente também recebe SSE. Push com a página fechada e pagamento online ainda não foram integrados. Pix/cartão online exigem provedor, contas recebedoras por restaurante e webhooks; a operação atual registra recebimento presencial.
+
+Migrações dos restaurantes são aplicadas no primeiro acesso de cada instância, com lock PostgreSQL para coordenar acessos simultâneos. Uma base de restaurante indisponível não bloqueia a inicialização de todas as outras. O teste de operações inclui a atualização concorrente de um restaurante existente na versão anterior da migração.
+
+`TestKitchenWaiterOrdersAndSettlement` verifica funções, envio concorrente/repetido, preços preservados, cancelamento, preparo exclusivo, entrega, fechamento, recebimentos, CSV, troca de senha e revogação. Com `MEZO_PUBLISHED_TEST=1`, `MEZO_INTEGRATION=1` e a configuração HTTPS de produção, esse teste percorre as APIs do deployment público; os bancos temporários são removidos no final. Não execute como monitor periódico ou simultaneamente a uma mudança de versão.
+
+A conta Vercel atual está no plano Hobby. Antes de uso comercial, o responsável precisa escolher um plano comercial permitido pela [política da Vercel](https://vercel.com/docs/limits/fair-use-guidelines).
 
 A publicação privada em Sites permanece uma **demonstração estática**, agora com a marca Mezô. Esse ambiente serve `dist`, não executa o monólito Go nem conecta a este PostgreSQL. A demonstração usa armazenamento local e identifica ações simuladas; o Go insere o marcador de execução real e usa exclusivamente a API.
 

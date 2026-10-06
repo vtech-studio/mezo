@@ -27,7 +27,7 @@ type Call struct {
 
 func (a *App) bootstrap(c echo.Context) error {
 	kind := "customer"
-	if c.QueryParam("role") == "staff" {
+	if c.QueryParam("role") == "staff" || c.QueryParam("view") == "waiter" {
 		kind = "staff"
 	}
 	x, err := a.access(c, kind, false)
@@ -35,6 +35,9 @@ func (a *App) bootstrap(c echo.Context) error {
 		return err
 	}
 	defer x.Release()
+	if kind == "staff" && x.Role != "manager" && x.Role != "waiter" {
+		return echo.NewHTTPError(403, "Use o acesso da cozinha")
+	}
 	ctx := c.Request().Context()
 	out := map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name, "slug": x.Tenant.Slug}, "csrf": x.Session.CSRF, "role": kind, "paymentsEnabled": false}
 	out["realtime"] = "events"
@@ -103,7 +106,7 @@ func (a *App) bootstrap(c echo.Context) error {
 		}
 		out["table"] = map[string]any{"number": n, "seats": seats}
 		out["service"] = service
-		rows, err = x.Pool.Query(ctx, "SELECT id,menu_id,name,price,qty FROM consumption WHERE session_id=$1 ORDER BY created_at", x.Session.Subject)
+		rows, err = x.Pool.Query(ctx, "SELECT id,menu_id,name,price,qty FROM consumption WHERE session_id=$1 AND NOT cancelled ORDER BY created_at", x.Session.Subject)
 		if err != nil {
 			return err
 		}
@@ -131,7 +134,7 @@ func (a *App) bootstrap(c echo.Context) error {
 		out["items"] = items
 		out["totals"] = map[string]int{"subtotal": subtotal, "service": fee, "total": subtotal + fee}
 	} else {
-		rows, err = x.Pool.Query(ctx, "SELECT d.number,d.seats,COALESCE(s.id,''),COALESCE(sum(v.price::bigint*v.qty),0) FROM dining_tables d LEFT JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL LEFT JOIN consumption v ON v.session_id=s.id GROUP BY d.number,d.seats,s.id ORDER BY d.number")
+		rows, err = x.Pool.Query(ctx, "SELECT d.number,d.seats,COALESCE(s.id,''),COALESCE(sum(v.price::bigint*v.qty),0) FROM dining_tables d LEFT JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL LEFT JOIN consumption v ON v.session_id=s.id AND NOT v.cancelled GROUP BY d.number,d.seats,s.id ORDER BY d.number")
 		if err != nil {
 			return err
 		}
@@ -153,6 +156,15 @@ func (a *App) bootstrap(c echo.Context) error {
 		}
 		out["tables"] = tables
 	}
+	orderSession := ""
+	if kind == "customer" {
+		orderSession = x.Session.Subject
+	}
+	orders, err := readOrders(ctx, x.Pool, orderSession, false)
+	if err != nil {
+		return err
+	}
+	out["orders"] = orders
 	return c.JSON(200, out)
 }
 func (a *App) createCall(c echo.Context) error {
@@ -206,22 +218,37 @@ func (a *App) createCall(c echo.Context) error {
 	return c.JSON(200, map[string]any{"id": id, "duplicate": duplicate})
 }
 func (a *App) updateCall(c echo.Context) error {
-	x, err := a.access(c, "staff", true)
+	x, err := a.staffAccess(c, true, "manager", "waiter")
 	if err != nil {
 		return err
 	}
 	defer x.Release()
 	action := c.Param("action")
+	if action == "release" && x.Role != "manager" {
+		return echo.NewHTTPError(403, "Somente o responsável pode devolver um chamado")
+	}
 	tx, err := x.Pool.Begin(c.Request().Context())
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(c.Request().Context())
+	if err = lockOperator(c.Request().Context(), tx, x.Session.Subject, x.Role); err != nil {
+		return err
+	}
 	var sessionID string
+	err = tx.QueryRow(c.Request().Context(), "SELECT s.id FROM table_sessions s JOIN calls c ON c.session_id=s.id WHERE c.id=$1 AND s.closed_at IS NULL FOR UPDATE OF s", c.Param("id")).Scan(&sessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(409, "Chamado indisponível ou conta encerrada")
+	}
+	if err != nil {
+		return err
+	}
 	if action == "accept" {
 		err = tx.QueryRow(c.Request().Context(), "UPDATE calls SET status='progress',assigned_to=$2,accepted_at=now() WHERE id=$1 AND status='pending' RETURNING session_id", c.Param("id"), x.Session.Subject).Scan(&sessionID)
 	} else if action == "complete" {
 		err = tx.QueryRow(c.Request().Context(), "UPDATE calls SET status='done',completed_at=now() WHERE id=$1 AND status='progress' AND assigned_to=$2 RETURNING session_id", c.Param("id"), x.Session.Subject).Scan(&sessionID)
+	} else if action == "release" {
+		err = tx.QueryRow(c.Request().Context(), "UPDATE calls SET status='pending',assigned_to=NULL,accepted_at=NULL WHERE id=$1 AND status='progress' RETURNING session_id", c.Param("id")).Scan(&sessionID)
 	} else {
 		return echo.ErrNotFound
 	}
@@ -263,7 +290,7 @@ func (a *App) service(c echo.Context) error {
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 func (a *App) addConsumption(c echo.Context) error {
-	x, err := a.access(c, "staff", true)
+	x, err := a.staffAccess(c, true, "manager", "waiter")
 	if err != nil {
 		return err
 	}
@@ -287,6 +314,9 @@ func (a *App) addConsumption(c echo.Context) error {
 		return err
 	}
 	defer tx.Rollback(c.Request().Context())
+	if err = lockOperator(c.Request().Context(), tx, x.Session.Subject, x.Role); err != nil {
+		return err
+	}
 	var session string
 	if err = tx.QueryRow(c.Request().Context(), "SELECT id FROM table_sessions WHERE table_number=$1 AND closed_at IS NULL FOR UPDATE", n).Scan(&session); errors.Is(err, pgx.ErrNoRows) {
 		return echo.NewHTTPError(409, "Abra a mesa antes de lançar o consumo")
@@ -308,7 +338,7 @@ func (a *App) addConsumption(c echo.Context) error {
 	return c.JSON(201, map[string]bool{"ok": true})
 }
 func (a *App) closeTable(c echo.Context) error {
-	x, err := a.access(c, "staff", true)
+	x, err := a.staffAccess(c, true, "manager", "waiter")
 	if err != nil {
 		return err
 	}
@@ -318,7 +348,9 @@ func (a *App) closeTable(c echo.Context) error {
 		return echo.ErrNotFound
 	}
 	var in struct {
-		Confirmed bool `json:"confirmed"`
+		Confirmed     bool   `json:"confirmed"`
+		Method        string `json:"method"`
+		ExpectedTotal *int64 `json:"expectedTotal"`
 	}
 	if err = decode(c, &in); err != nil {
 		return err
@@ -331,12 +363,49 @@ func (a *App) closeTable(c echo.Context) error {
 		return err
 	}
 	defer tx.Rollback(c.Request().Context())
+	if err = lockOperator(c.Request().Context(), tx, x.Session.Subject, x.Role); err != nil {
+		return err
+	}
 	var session string
-	err = tx.QueryRow(c.Request().Context(), "UPDATE table_sessions SET closed_at=now() WHERE table_number=$1 AND closed_at IS NULL RETURNING id", n).Scan(&session)
+	var service bool
+	err = tx.QueryRow(c.Request().Context(), "SELECT id,service FROM table_sessions WHERE table_number=$1 AND closed_at IS NULL FOR UPDATE", n).Scan(&session, &service)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return echo.NewHTTPError(409, "A mesa já está fechada")
 	}
 	if err != nil {
+		return err
+	}
+	var outstanding bool
+	if err = tx.QueryRow(c.Request().Context(), "SELECT EXISTS(SELECT 1 FROM orders WHERE session_id=$1 AND status IN ('queued','preparing','ready'))", session).Scan(&outstanding); err != nil {
+		return err
+	}
+	if outstanding {
+		return echo.NewHTTPError(409, "Entregue ou cancele os pedidos pendentes antes de fechar a mesa")
+	}
+	var subtotal int64
+	if err = tx.QueryRow(c.Request().Context(), "SELECT COALESCE(sum(price::bigint*qty),0) FROM consumption WHERE session_id=$1 AND NOT cancelled", session).Scan(&subtotal); err != nil {
+		return err
+	}
+	var fee int64
+	if service {
+		fee = (subtotal + 5) / 10
+	}
+	total := subtotal + fee
+	if in.ExpectedTotal == nil || *in.ExpectedTotal != total {
+		return echo.NewHTTPError(409, "A conta mudou. Confira o total novamente antes de confirmar")
+	}
+	if total == 0 {
+		in.Method = "none"
+	} else if in.Method != "cash" && in.Method != "pix" && in.Method != "card" && in.Method != "other" {
+		return echo.NewHTTPError(400, "Informe como o pagamento foi recebido presencialmente")
+	}
+	if _, err = tx.Exec(c.Request().Context(), "INSERT INTO settlements(session_id,closed_by,method,subtotal,service,total) VALUES($1,$2,$3,$4,$5,$6)", session, x.Session.Subject, in.Method, subtotal, fee, total); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(c.Request().Context(), "UPDATE table_sessions SET closed_at=now() WHERE id=$1", session); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(c.Request().Context(), "INSERT INTO call_events(call_id,action,staff_id) SELECT id,'table_closed',$2 FROM calls WHERE session_id=$1 AND status IN ('pending','progress')", session, x.Session.Subject); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(c.Request().Context(), "UPDATE calls SET status='cancelled' WHERE session_id=$1 AND status IN ('pending','progress')", session); err != nil {
@@ -349,7 +418,7 @@ func (a *App) closeTable(c echo.Context) error {
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 func (a *App) openTable(c echo.Context) error {
-	x, err := a.access(c, "staff", true)
+	x, err := a.staffAccess(c, true, "manager", "waiter")
 	if err != nil {
 		return err
 	}
@@ -358,12 +427,24 @@ func (a *App) openTable(c echo.Context) error {
 	if err != nil {
 		return echo.ErrNotFound
 	}
-	_, err = x.Pool.Exec(c.Request().Context(), "INSERT INTO table_sessions(id,table_number) VALUES($1,$2)", randomID(), n)
+	ctx := c.Request().Context()
+	tx, err := x.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = lockOperator(ctx, tx, x.Session.Subject, x.Role); err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, "INSERT INTO table_sessions(id,table_number) VALUES($1,$2)", randomID(), n)
 	if err != nil {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && (pe.Code == "23505" || pe.Code == "23503") {
 			return echo.NewHTTPError(409, "Mesa inexistente ou já aberta")
 		}
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
 	a.hub.publish(x.Tenant.ID, "")

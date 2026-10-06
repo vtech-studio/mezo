@@ -264,7 +264,7 @@ func TestPostgresIsolationAndRestaurantFlow(t *testing.T) {
 	}
 	recovered.close()
 	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/close", map[string]any{"confirmed": false}, staff1, csrf1), 400)
-	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/close", map[string]any{"confirmed": true}, staff1, csrf1), 200)
+	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/close", map[string]any{"confirmed": true, "method": "pix", "expectedTotal": 2468}, staff1, csrf1), 200)
 	expect(request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, customer, ""), 410)
 	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1), 201)
 	expect(request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, customer, ""), 410)

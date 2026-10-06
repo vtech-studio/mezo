@@ -46,7 +46,7 @@ func (a *App) adminPage(c echo.Context) error {
 	}
 	cards := []map[string]any{}
 	for _, t := range tenants {
-		card := map[string]any{"Name": t.Name, "Slug": t.Slug, "Status": t.Status, "TeamURL": "/r/" + t.Slug + "/equipe"}
+		card := map[string]any{"Name": t.Name, "Slug": t.Slug, "Status": t.Status, "TeamURL": "/r/" + t.Slug + "/garcom", "KitchenURL": "/r/" + t.Slug + "/cozinha"}
 		tables := []map[string]any{}
 		if t.Status == "active" {
 			p, release, e := a.lease(c.Request().Context(), t)
@@ -70,10 +70,56 @@ func (a *App) adminPage(c echo.Context) error {
 			}
 			e = rows.Err()
 			rows.Close()
+			if e != nil {
+				release()
+				return e
+			}
+			staff, menu := []map[string]any{}, []map[string]any{}
+			rows, e = p.Query(c.Request().Context(), "SELECT id,name,email,role,active FROM staff ORDER BY name")
+			if e != nil {
+				release()
+				return e
+			}
+			for rows.Next() {
+				var id, name, email, role string
+				var active bool
+				if e = rows.Scan(&id, &name, &email, &role, &active); e != nil {
+					rows.Close()
+					release()
+					return e
+				}
+				staff = append(staff, map[string]any{"ID": id, "Name": name, "Email": email, "Role": role, "Active": active})
+			}
+			e = rows.Err()
+			rows.Close()
+			if e != nil {
+				release()
+				return e
+			}
+			rows, e = p.Query(c.Request().Context(), "SELECT id,name,price,active FROM menu_items ORDER BY name")
+			if e != nil {
+				release()
+				return e
+			}
+			for rows.Next() {
+				var id, name string
+				var price int
+				var active bool
+				if e = rows.Scan(&id, &name, &price, &active); e != nil {
+					rows.Close()
+					release()
+					return e
+				}
+				menu = append(menu, map[string]any{"ID": id, "Name": name, "Price": price, "Active": active})
+			}
+			e = rows.Err()
+			rows.Close()
 			release()
 			if e != nil {
 				return e
 			}
+			card["Staff"] = staff
+			card["Menu"] = menu
 		}
 		card["Tables"] = tables
 		cards = append(cards, card)
@@ -85,6 +131,9 @@ func (a *App) adminLogin(c echo.Context) error {
 		return err
 	}
 	email := strings.ToLower(strings.TrimSpace(c.FormValue("email")))
+	if err := a.limitLogin(c, "admin:", email); err != nil {
+		return err
+	}
 	var hash string
 	err := a.control.QueryRow(c.Request().Context(), "SELECT password_hash FROM administrators WHERE email=$1", email).Scan(&hash)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(c.FormValue("password"))) != nil {
@@ -149,6 +198,13 @@ func (a *App) createStaff(c echo.Context) error {
 	}
 	defer release()
 	name, email, password := strings.TrimSpace(c.FormValue("name")), strings.ToLower(strings.TrimSpace(c.FormValue("email"))), c.FormValue("password")
+	role := c.FormValue("role")
+	if role == "" {
+		role = "waiter"
+	}
+	if role != "waiter" && role != "kitchen" && role != "manager" {
+		return adminProblem(c, "Escolha uma função válida")
+	}
 	if name == "" || len(name) > 80 || !strings.Contains(email, "@") || len(email) > 200 || len(password) < 12 || len(password) > 72 {
 		return adminProblem(c, "Informe nome, e-mail e senha de 12–72 caracteres")
 	}
@@ -156,7 +212,7 @@ func (a *App) createStaff(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	_, err = p.Exec(c.Request().Context(), "INSERT INTO staff(id,name,email,password_hash,role) VALUES($1,$2,$3,$4,'waiter')", randomID(), name, email, string(hash))
+	_, err = p.Exec(c.Request().Context(), "INSERT INTO staff(id,name,email,password_hash,role) VALUES($1,$2,$3,$4,$5)", randomID(), name, email, string(hash), role)
 	if err != nil {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && pe.Code == "23505" {
@@ -165,6 +221,84 @@ func (a *App) createStaff(c echo.Context) error {
 		return err
 	}
 	return adminOK(c, "Atendente cadastrado")
+}
+func (a *App) setStaffActive(c echo.Context) error {
+	if _, err := a.session(c, "admin", "", true); err != nil {
+		return err
+	}
+	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
+	if err != nil {
+		return echo.ErrNotFound
+	}
+	p, release, err := a.lease(c.Request().Context(), t)
+	if err != nil {
+		return err
+	}
+	defer release()
+	active := c.FormValue("active")
+	if active != "true" && active != "false" {
+		return adminProblem(c, "Estado inválido")
+	}
+	ctx := c.Request().Context()
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var id string
+	if err = tx.QueryRow(ctx, "SELECT id FROM staff WHERE id=$1 FOR UPDATE", c.Param("id")).Scan(&id); err != nil {
+		return echo.ErrNotFound
+	}
+	if active == "false" {
+		var busy bool
+		if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM calls WHERE assigned_to=$1 AND status='progress') OR EXISTS(SELECT 1 FROM orders WHERE assigned_to=$1 AND status='preparing')", id).Scan(&busy); err != nil {
+			return err
+		}
+		if busy {
+			return adminProblem(c, "Conclua ou devolva os atendimentos e pedidos desta pessoa antes de desativar o acesso")
+		}
+	}
+	if _, err = tx.Exec(ctx, "UPDATE staff SET active=$2 WHERE id=$1", id, active == "true"); err != nil {
+		return err
+	}
+	if active == "false" {
+		if _, err = a.control.Exec(ctx, "DELETE FROM auth_sessions WHERE tenant_id=$1 AND kind='staff' AND subject=$2", t.ID, id); err != nil {
+			return err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	return adminOK(c, "Acesso da equipe atualizado")
+}
+func (a *App) editMenuItem(c echo.Context) error {
+	if _, err := a.session(c, "admin", "", true); err != nil {
+		return err
+	}
+	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
+	if err != nil {
+		return echo.ErrNotFound
+	}
+	p, release, err := a.lease(c.Request().Context(), t)
+	if err != nil {
+		return err
+	}
+	defer release()
+	name := strings.TrimSpace(c.FormValue("name"))
+	price, err := strconv.Atoi(c.FormValue("price"))
+	active := c.FormValue("active") == "true"
+	if err != nil || name == "" || len(name) > 100 || price < 0 || price > 10000000 {
+		return adminProblem(c, "Confira o nome e o preço em centavos")
+	}
+	tag, err := p.Exec(c.Request().Context(), "UPDATE menu_items SET name=$2,price=$3,active=$4 WHERE id=$1", c.Param("id"), name, price, active)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return echo.ErrNotFound
+	}
+	a.hub.publish(t.ID, "")
+	return adminOK(c, "Cardápio atualizado. Pedidos anteriores preservam seus preços.")
 }
 func (a *App) createMenuItem(c echo.Context) error {
 	if _, err := a.session(c, "admin", "", true); err != nil {

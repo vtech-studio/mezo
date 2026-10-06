@@ -73,9 +73,10 @@ function loadState(){
 }
 const serverMode=!!document.querySelector('meta[name="mezo-runtime"]');
 document.querySelector('.preview-note').hidden=serverMode;
+document.querySelector('.role-switch').hidden=serverMode;
 const tenantSlug=serverMode ? location.pathname.split('/')[2] : '';
 let tableNumber=8, tableSeats=2, staffName='Ana', staffID='', restaurantName='Casa do Sol';
-let tableData=[], csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
+let tableData=[], liveOrders=[], csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
 let liveTransport='events', livePollTimer=null;
 let state=serverMode ? {service:true,calls:[]} : loadState();
 let role='customer';
@@ -122,6 +123,12 @@ function activityCard(call){
 function renderHome(){
   const active=state.calls.filter(c=>c.table===tableNumber&&['pending','progress'].includes(c.status));
   main.innerHTML=`<div class="table-line"><span class="table-id">${icon('table')} Mesa ${tableName(tableNumber)}</span><span class="badge">Aberta · ${tableSeats} pessoas</span></div><section class="welcome"><div><p class="eyebrow">BOA COMIDA. BOA COMPANHIA.</p><h1>Aproveite.<br>A gente cuida<br><em>do resto.</em></h1></div>${welcomeArt}</section><button class="call-action" data-action="call"><span class="call-icon">${icon('bell')}</span><span><strong>Chamar garçom</strong><small>Precisou, é só tocar.</small></span>${icon('arrow')}</button><div class="shortcut-grid"><a href="#cardapio" class="shortcut">${icon('book')}${icon('arrowUp','small-arrow')}<strong>Nosso cardápio</strong><small>Escolha com calma.</small></a><a href="#conta" class="shortcut">${icon('receipt')}${icon('arrowUp','small-arrow')}<strong>Minha conta</strong><small>${money(totalValue())} até agora</small></a></div><section><div class="section-heading"><h2>Seu atendimento</h2>${active.length?`<span class="badge neutral">${active.length} ${active.length===1?'chamado':'chamados'}</span>`:'<span class="eyebrow" style="font-size:8px">ESTAMOS POR AQUI</span>'}</div>${active.length?`<div class="call-list">${active.map(activityCard).join('')}</div>`:`<div class="empty-note">${icon('circleCheck')}<p><strong>Tudo certo por aqui.</strong>Quando precisar, nossa equipe está a um toque.</p></div>`}</section><footer class="hospitality-note">${icon('heart')} Feito para você se sentir em casa.<span class="powered">mezô</span></footer>`;
+  if(serverMode&&liveOrders.length){
+    const labels={queued:'Recebido pela cozinha',preparing:'Em preparo',ready:'Pronto para servir',delivered:'Entregue',cancelled:'Cancelado'};
+    const section=document.createElement('section');
+    section.innerHTML=`<div class="section-heading"><h2>Seus pedidos</h2></div>${liveOrders.map(o=>`<article class="activity-card"><div class="activity-top"><div><strong>${escapeHTML(labels[o.status])}</strong><small>Pedido ${escapeHTML(o.id.slice(-5).toUpperCase())} · ${timeLabel(o.created)}</small></div></div><p class="activity-copy">${o.items.map(i=>`${i.qty}× ${escapeHTML(i.name)}`).join(' · ')}</p></article>`).join('')}`;
+    main.insertBefore(section,main.querySelector('footer'));
+  }
 }
 function menuList(){
   const dishes=menu.filter(d=>(category==='Todos'||d.category===category)&&(!query||(d.name+' '+d.description).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().includes(query.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase())));
@@ -162,6 +169,7 @@ function render(){
 }
 async function navigate(next,focus=false){
   const isWaiter=['fila','mesas','historico'].includes(next);
+  if(serverMode&&isWaiter){location.href=`/r/${encodeURIComponent(tenantSlug)}/garcom`;return;}
   role=isWaiter?'waiter':'customer';
   route=['mesa','cardapio','conta','fila','mesas','historico'].includes(next)?next:'mesa';
   if(serverMode){

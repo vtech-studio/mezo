@@ -14,3 +14,4 @@
 .auth-input{width:100%;min-height:48px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--white,#fffdf7);color:var(--ink);font:16px system-ui;margin:6px 0 16px}.option-list a{display:flex;align-items:center;min-height:48px;color:var(--ink);text-decoration:none;font-size:13px}button:disabled{opacity:.55;cursor:default}.powered{letter-spacing:-1px;font-size:22px}
 .preview-note{margin:12px 24px 0;color:var(--muted);font-size:10px;text-align:center}.preview-note[hidden]{display:none}
 @media(max-width:699px){.welcome{display:grid;grid-template-columns:minmax(0,1fr) 80px;gap:6px;min-height:174px}.welcome h1{font-size:clamp(31px,9.5vw,46px)}.welcome-art{position:static;width:80px;height:100px;align-self:end;margin-bottom:3px}.welcome .eyebrow{font-size:8px;letter-spacing:1px}.restaurant{min-width:0}.restaurant>span:last-child{overflow-wrap:anywhere}.app-header{gap:12px}.icon-button{flex-shrink:0}}
+[hidden]{display:none!important}

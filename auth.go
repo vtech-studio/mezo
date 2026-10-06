@@ -24,6 +24,17 @@ func tokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
+func (a *App) limitLogin(c echo.Context, scope, email string) error {
+	var attempts int
+	err := a.control.QueryRow(c.Request().Context(), `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<now() THEN 1 ELSE login_attempts.attempts+1 END,reset_at=CASE WHEN login_attempts.reset_at<now() THEN now()+interval '15 minutes' ELSE login_attempts.reset_at END RETURNING attempts`, tokenHash(a.cfg.Secret+scope+strings.ToLower(strings.TrimSpace(email)))).Scan(&attempts)
+	if err != nil {
+		return err
+	}
+	if attempts > 15 {
+		return echo.NewHTTPError(429, "Muitas tentativas para este acesso. Aguarde 15 minutos.")
+	}
+	return nil
+}
 func (a *App) origin(c echo.Context) error {
 	if c.Request().Header.Get("Origin") != a.cfg.Origin {
 		return echo.NewHTTPError(403, "Origem não autorizada")
@@ -91,6 +102,7 @@ type Access struct {
 	Session Session
 	Pool    *pgxpool.Pool
 	Release func()
+	Role    string
 }
 
 func (a *App) access(c echo.Context, kind string, mutation bool) (Access, error) {
@@ -121,7 +133,31 @@ func (a *App) access(c echo.Context, kind string, mutation bool) (Access, error)
 			return out, echo.NewHTTPError(410, "Esta conta foi encerrada. Escaneie a placa novamente quando a equipe abrir a mesa.")
 		}
 	}
-	return Access{t, s, p, release}, nil
+	var role string
+	if kind == "staff" {
+		err = p.QueryRow(c.Request().Context(), "SELECT role FROM staff WHERE id=$1 AND active", s.Subject).Scan(&role)
+		if err != nil {
+			release()
+			if errors.Is(err, pgx.ErrNoRows) {
+				return out, echo.NewHTTPError(401, "Acesso da equipe desativado")
+			}
+			return out, err
+		}
+	}
+	return Access{Tenant: t, Session: s, Pool: p, Release: release, Role: role}, nil
+}
+func (a *App) staffAccess(c echo.Context, mutation bool, roles ...string) (Access, error) {
+	x, err := a.access(c, "staff", mutation)
+	if err != nil {
+		return x, err
+	}
+	for _, role := range roles {
+		if x.Role == role {
+			return x, nil
+		}
+	}
+	x.Release()
+	return Access{}, echo.NewHTTPError(403, "Sua função não permite esta operação")
 }
 func (a *App) enterTable(c echo.Context) error {
 	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
@@ -159,7 +195,7 @@ func (a *App) staffPage(c echo.Context) error {
 	if _, err := a.tenant(c.Request().Context(), c.Param("slug")); err != nil {
 		return echo.ErrNotFound
 	}
-	return a.appPage(c)
+	return c.Redirect(303, "/r/"+c.Param("slug")+"/garcom")
 }
 func (a *App) appPage(c echo.Context) error {
 	b, err := assets.ReadFile("dist/index.html")
@@ -185,6 +221,9 @@ func (a *App) staffLogin(c echo.Context) error {
 	if err := decode(c, &in); err != nil {
 		return err
 	}
+	if err := a.limitLogin(c, "staff:"+c.Param("slug"), in.Email); err != nil {
+		return err
+	}
 	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
 	if err != nil {
 		return echo.NewHTTPError(401, "E-mail ou senha inválidos")
@@ -194,15 +233,25 @@ func (a *App) staffLogin(c echo.Context) error {
 		return err
 	}
 	defer release()
-	var id, hash string
-	err = p.QueryRow(c.Request().Context(), "SELECT id,password_hash FROM staff WHERE email=$1", strings.ToLower(strings.TrimSpace(in.Email))).Scan(&id, &hash)
+	ctx := c.Request().Context()
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var id, hash, role string
+	// Serialize login with password changes and access revocation.
+	err = tx.QueryRow(ctx, "SELECT id,password_hash,role FROM staff WHERE email=$1 AND active FOR SHARE", strings.ToLower(strings.TrimSpace(in.Email))).Scan(&id, &hash, &role)
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(in.Password)) != nil {
 		return echo.NewHTTPError(401, "E-mail ou senha inválidos")
 	}
 	if err = a.newSession(c, "staff", t.ID, id); err != nil {
 		return err
 	}
-	return c.JSON(200, map[string]bool{"ok": true})
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	return c.JSON(200, map[string]any{"ok": true, "role": role})
 }
 func (a *App) logout(c echo.Context) error {
 	x, err := a.access(c, "staff", true)

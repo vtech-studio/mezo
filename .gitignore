@@ -12,3 +12,4 @@ bin/
 LOCAL-ACCESS.md
 .vercel/
 /server
+backups/

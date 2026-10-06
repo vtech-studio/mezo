@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -152,13 +153,20 @@ func (a *App) connection(db, user, password string) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 func migrate(ctx context.Context, cfg *pgx.ConnConfig, kind string) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	db := stdlib.OpenDB(*cfg)
+	db.SetMaxOpenConns(1)
 	defer db.Close()
 	sub, err := fs.Sub(assets, "migrations/"+kind)
 	if err != nil {
 		return err
 	}
-	p, err := goose.NewProvider(goose.DialectPostgres, db, sub, goose.WithDisableGlobalRegistry(true))
+	locker, err := lock.NewPostgresSessionLocker(lock.WithLockTimeout(1, 25), lock.WithUnlockTimeout(1, 3))
+	if err != nil {
+		return err
+	}
+	p, err := goose.NewProvider(goose.DialectPostgres, db, sub, goose.WithDisableGlobalRegistry(true), goose.WithSessionLocker(locker))
 	if err != nil {
 		return err
 	}
@@ -244,27 +252,8 @@ func newApp(ctx context.Context, cfg Config) (*App, error) {
 	if _, err = a.control.Exec(ctx, "INSERT INTO administrators(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING", cfg.AdminEmail, string(hash)); err != nil {
 		return nil, err
 	}
-	tenants, err := a.listTenants(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, t := range tenants {
-		if t.Status != "active" {
-			continue
-		}
-		pw, e := a.crypt(t.DBSecret, false)
-		if e != nil {
-			return nil, e
-		}
-		tc, e := a.connection(t.DBName, t.DBRole, pw)
-		if e != nil {
-			return nil, e
-		}
-		if e = migrate(ctx, tc.ConnConfig, "tenant"); e != nil {
-			return nil, fmt.Errorf("migração de %s: %w", t.Slug, e)
-		}
-	}
 	_, _ = a.control.Exec(ctx, "DELETE FROM auth_sessions WHERE expires_at<now()")
+	_, _ = a.control.Exec(ctx, "DELETE FROM login_attempts WHERE reset_at<now()")
 	failed = false
 	return a, nil
 }
@@ -329,6 +318,10 @@ func (a *App) lease(ctx context.Context, t Tenant) (*pgxpool.Pool, func(), error
 		cfg, err := a.connection(t.DBName, t.DBRole, password)
 		if err != nil {
 			return nil, nil, err
+		}
+		// Migrate only the restaurant being accessed; coordinate concurrent instances.
+		if err = migrate(ctx, cfg.ConnConfig, "tenant"); err != nil {
+			return nil, nil, fmt.Errorf("migração de %s: %w", t.Slug, err)
 		}
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
