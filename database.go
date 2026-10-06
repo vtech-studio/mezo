@@ -69,6 +69,7 @@ type cachedPool struct {
 type App struct {
 	cfg            Config
 	admin, control *pgxpool.Pool
+	adminRole      string
 	mu             sync.Mutex
 	pools          map[string]*cachedPool
 	hub            *Hub
@@ -105,18 +106,49 @@ func (a *App) crypt(value string, encrypt bool) (string, error) {
 	plain, err := gcm.Open(nil, b[:gcm.NonceSize()], b[gcm.NonceSize():], []byte("mezo/tenant-password/v1"))
 	return string(plain), err
 }
-func (a *App) connection(db, user, password string) (*pgxpool.Config, error) {
-	cfg, err := pgxpool.ParseConfig(a.cfg.AdminURL)
+func databasePoolConfig(c Config) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(c.AdminURL)
 	if err != nil {
 		return nil, err
+	}
+	cfg.MaxConns = 3
+	if c.Serverless {
+		cfg.MaxConns = 1
+	}
+	cfg.MinConns = 0
+	cfg.MaxConnIdleTime = 2 * time.Minute
+	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
+	if strings.HasSuffix(strings.ToLower(cfg.ConnConfig.Host), ".pooler.supabase.com") {
+		if cfg.ConnConfig.Port != 5432 {
+			return nil, errors.New("use o Session pooler do Supabase na porta 5432; o provisionamento exige locks de sessão")
+		}
+		if cfg.ConnConfig.TLSConfig == nil {
+			return nil, errors.New("a conexão com o Supabase exige TLS: use sslmode=require ou verify-full")
+		}
+		for _, fallback := range cfg.ConnConfig.Fallbacks {
+			if fallback.TLSConfig == nil {
+				return nil, errors.New("a conexão com o Supabase exige TLS: use sslmode=require ou verify-full")
+			}
+		}
+		role, project, ok := strings.Cut(cfg.ConnConfig.User, ".")
+		if !ok || role == "" || project == "" {
+			return nil, errors.New("o usuário do pooler Supabase deve incluir o identificador do projeto")
+		}
+	}
+	return cfg, nil
+}
+func (a *App) connection(db, user, password string) (*pgxpool.Config, error) {
+	cfg, err := databasePoolConfig(a.cfg)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(strings.ToLower(cfg.ConnConfig.Host), ".pooler.supabase.com") {
+		_, project, _ := strings.Cut(cfg.ConnConfig.User, ".")
+		user += "." + project
 	}
 	cfg.ConnConfig.Database = db
 	cfg.ConnConfig.User = user
 	cfg.ConnConfig.Password = password
-	cfg.MaxConns = 3
-	cfg.MinConns = 0
-	cfg.MaxConnIdleTime = 2 * time.Minute
-	cfg.ConnConfig.ConnectTimeout = 5 * time.Second
 	return cfg, nil
 }
 func migrate(ctx context.Context, cfg *pgx.ConnConfig, kind string) error {
@@ -134,11 +166,14 @@ func migrate(ctx context.Context, cfg *pgx.ConnConfig, kind string) error {
 	return err
 }
 func newApp(ctx context.Context, cfg Config) (*App, error) {
-	adminCfg, err := pgxpool.ParseConfig(cfg.AdminURL)
+	adminCfg, err := databasePoolConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 	adminCfg.MaxConns = 2
+	if cfg.Serverless {
+		adminCfg.MaxConns = 1
+	}
 	admin, err := pgxpool.NewWithConfig(ctx, adminCfg)
 	if err != nil {
 		return nil, err
@@ -155,6 +190,11 @@ func newApp(ctx context.Context, cfg Config) (*App, error) {
 		return nil, err
 	}
 	defer lock.Release()
+	// Poolers can encode routing information in the login name. PostgreSQL's
+	// current_user is the actual role that must receive database ownership grants.
+	if err = lock.QueryRow(ctx, "SELECT current_user").Scan(&a.adminRole); err != nil {
+		return nil, err
+	}
 	if _, err = lock.Exec(ctx, "SELECT pg_advisory_lock(74829101)"); err != nil {
 		return nil, err
 	}
@@ -172,7 +212,7 @@ func newApp(ctx context.Context, cfg Config) (*App, error) {
 	}
 	// PostgreSQL 16+ requires SET membership to assign database ownership. INHERIT
 	// also lets a CREATEDB/CREATEROLE provisioner revoke PUBLIC database access.
-	if _, err = lock.Exec(ctx, "GRANT mezo_control_app TO "+pgx.Identifier{adminCfg.ConnConfig.User}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
+	if _, err = lock.Exec(ctx, "GRANT mezo_control_app TO "+pgx.Identifier{a.adminRole}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
 		return nil, err
 	}
 	if err = lock.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname='mezo_control')").Scan(&exists); err != nil {
@@ -325,12 +365,7 @@ func (a *App) provision(ctx context.Context, slug, name, email, staffName, passw
 	if _, err = a.admin.Exec(ctx, "CREATE ROLE "+pgx.Identifier{t.DBRole}.Sanitize()+" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '"+dbPassword+"'"); err != nil {
 		return t, err
 	}
-	provisioner, parseErr := pgxpool.ParseConfig(a.cfg.AdminURL)
-	if parseErr != nil {
-		err = parseErr
-		return t, err
-	}
-	if _, err = a.admin.Exec(ctx, "GRANT "+pgx.Identifier{t.DBRole}.Sanitize()+" TO "+pgx.Identifier{provisioner.ConnConfig.User}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
+	if _, err = a.admin.Exec(ctx, "GRANT "+pgx.Identifier{t.DBRole}.Sanitize()+" TO "+pgx.Identifier{a.adminRole}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
 		return t, err
 	}
 	if _, err = a.admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{t.DBName}.Sanitize()+" OWNER "+pgx.Identifier{t.DBRole}.Sanitize()); err != nil {

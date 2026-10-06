@@ -1,4 +1,6 @@
 .git
+.agents
+skills-lock.json
 .openai
 .sites-runtime
 .sites-checkout

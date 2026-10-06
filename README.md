@@ -34,7 +34,7 @@ O servidor procura o banco no catálogo central e confere a sessão e o tenant a
 
 Todos os bancos pertencem à **mesma pasta de dados do PostgreSQL**. O PostgreSQL organiza internamente os arquivos por identificadores em `PGDATA/base`; não há arquivo SQLite ou pasta manual com o nome do restaurante. No Compose, a pasta comum é `./databases`. O banco central compartilha essa instância. Consulte a [organização dos arquivos do PostgreSQL](https://www.postgresql.org/docs/current/storage-file-layout.html).
 
-O catálogo e as permissões são criados pelo provisionador configurado em DATABASE_ADMIN_URL. As consultas usam o usuário limitado do banco central ou o usuário próprio do restaurante. O segredo do provisionador fica no servidor. Pools têm até três conexões; o cache limita a 16 pools e remove pools ociosos quando necessário.
+O catálogo e as permissões são criados pelo provisionador configurado em DATABASE_ADMIN_URL. As consultas usam o usuário limitado do banco central ou o usuário próprio do restaurante. O segredo do provisionador fica no servidor. Pools têm até três conexões localmente e uma por banco na Vercel; o cache limita a 16 pools e remove pools ociosos quando necessário.
 
 ## Fluxos funcionando
 
@@ -75,7 +75,7 @@ Importe o repositório GitHub e configure estas variáveis no ambiente de produ�
 
 | Variável | Valor |
 | --- | --- |
-| `DATABASE_ADMIN_URL` | Conexão direta ao PostgreSQL hospedado, com TLS e credencial provisionadora |
+| `DATABASE_ADMIN_URL` | Conexão direta ou Session pooler ao PostgreSQL hospedado, com TLS e credencial provisionadora |
 | `APP_SECRET` | Segredo aleatório com pelo menos 32 caracteres; preserve o mesmo valor nos próximos deploys |
 | `ADMIN_EMAIL` | E-mail do administrador inicial da plataforma |
 | `ADMIN_PASSWORD` | Senha inicial de 12 a 72 bytes |
@@ -85,6 +85,18 @@ Importe o repositório GitHub e configure estas variáveis no ambiente de produ�
 Guarde credenciais como variáveis sensíveis. Para uma demonstração com Casa do Sol, use `SEED_DEMO=true` e defina também `DEMO_STAFF_PASSWORD`; são dados fictícios. A alteração de `ADMIN_PASSWORD` não redefine uma conta já criada. Não compartilhe o banco de produção com deploys de prévia: use outro projeto PostgreSQL e outros segredos para testar mudanças.
 
 Na Vercel, a interface consulta o banco a cada cinco segundos enquanto a página está visível. Isso permite receber chamados entre diferentes instâncias de execução. O modo local continua usando SSE. As conexões ficam em pools por instância; dimensione o limite do PostgreSQL considerando o número de instâncias, restaurantes ativos e conexões administrativas.
+
+### Supabase
+
+Use um projeto Supabase em São Paulo (`gru1` na integração Vercel), conectado somente ao ambiente de produção do Mezô. Configure `DATABASE_ADMIN_URL` com a URI do **Session pooler**, porta `5432`, banco inicial `postgres` e `sslmode=require` ou `verify-full`. Copie o host e o usuário do diálogo Connect do Supabase: o host não deve ser deduzido da região. Exemplo sem credenciais reais:
+
+```text
+postgresql://postgres.PROJECT_REF:SENHA@POOLER_HOST:5432/postgres?sslmode=require
+```
+
+O backend acrescenta `.PROJECT_REF` aos usuários de conexão do banco central e dos restaurantes, conforme o roteamento do Supavisor. As permissões SQL usam a identidade real retornada por `current_user`. O Transaction pooler na porta `6543` é recusado porque o provisionamento e as migrações precisam de locks de sessão. Consulte [conexões do Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres).
+
+Continuamos com `mezo_control` e um banco/usuário por restaurante na mesma instância PostgreSQL. Esses bancos adicionais são acessíveis pelo backend Go e por clientes PostgreSQL; o painel e as APIs automáticas do Supabase trabalham apenas com o banco padrão `postgres`. A administração dos restaurantes permanece em `/admin`. Consulte [bancos adicionais no Supabase](https://supabase.com/docs/guides/troubleshooting/manually-created-databases-are-not-visible-in-the-supabase-dashboard-4415aa). Mantenha backups próprios dos bancos do Mezô e do catálogo como descrito acima.
 
 Depois de publicar, entre em `/admin`, cadastre o restaurante, abra sua mesa pela equipe e baixe o QR code no painel. Para criar também a placa com a marca Mezô a partir da URL real da mesa:
 
