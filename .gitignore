@@ -2,3 +2,11 @@
 .sites-checkout/
 node_modules/
 *.log
+.env
+.env.*
+!.env.example
+databases/
+work/
+bin/
+*.exe
+LOCAL-ACCESS.md

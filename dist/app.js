@@ -40,7 +40,7 @@ const reasons = [
   {id:'water',label:'Pedir água',icon:'water'},
   {id:'bill',label:'Pedir a conta',icon:'receipt'},
 ];
-const menu = [
+let menu = [
   {id:'burrata',name:'Burrata da casa',description:'Tomates assados, pesto de manjericão e pão de fermentação natural.',price:3800,category:'Entradas',art:'burrata',tag:'Favorito da casa',tags:['Vegetariano','Contém leite e glúten']},
   {id:'croqueta',name:'Croquetas de costela',description:'Crocantes por fora, cremosas por dentro. Com maionese de ervas.',price:2800,category:'Entradas',art:'croqueta',tags:['4 unidades','Contém glúten e ovos']},
   {id:'risoto',name:'Risoto de cogumelos',description:'Arroz arbóreo, mix de cogumelos, parmesão e um toque de vinho branco.',price:5800,category:'Principais',art:'risoto',tag:'Feito com carinho',tags:['Vegetariano','Contém leite']},
@@ -50,11 +50,11 @@ const menu = [
   {id:'agua',name:'Água mineral',description:'Com ou sem gás. Servida bem gelada.',price:700,category:'Bebidas',art:'water',tags:['500 ml','Sem álcool']},
   {id:'brownie',name:'Brownie quentinho',description:'Chocolate intenso, sorvete de baunilha e calda feita aqui.',price:2400,category:'Sobremesas',art:'brownie',tags:['Contém leite, ovos e glúten']},
 ];
-const receiptItems = [{id:'burrata',qty:1},{id:'risoto',qty:1},{id:'agua',qty:2},{id:'limonada',qty:1}];
-const subtotal = () => receiptItems.reduce((total,item) => total + menu.find(d => d.id===item.id).price * item.qty,0);
-const serviceValue = () => state.service ? Math.round(subtotal() * .1) : 0;
-const totalValue = () => subtotal() + serviceValue();
-const storageKey = 'mesa-casa-do-sol-v1';
+let receiptItems = [{id:'burrata',qty:1},{id:'risoto',qty:1},{id:'agua',qty:2},{id:'limonada',qty:1}];
+const subtotal = () => serverMode ? liveTotals.subtotal : receiptItems.reduce((total,item) => total + (item.price ?? menu.find(d => d.id===item.id)?.price ?? 0) * item.qty,0);
+const serviceValue = () => serverMode ? liveTotals.service : state.service ? Math.round(subtotal() * .1) : 0;
+const totalValue = () => serverMode ? liveTotals.total : subtotal() + serviceValue();
+const storageKey = 'mezo-demo-v1';
 const seedState = () => ({
   service:true,
   calls:[
@@ -71,7 +71,12 @@ function loadState(){
   }catch{}
   return seedState();
 }
-let state=loadState();
+const serverMode=!!document.querySelector('meta[name="mezo-runtime"]');
+document.querySelector('.preview-note').hidden=serverMode;
+const tenantSlug=serverMode ? location.pathname.split('/')[2] : '';
+let tableNumber=8, tableSeats=2, staffName='Ana', staffID='', restaurantName='Casa do Sol';
+let tableData=[], csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
+let state=serverMode ? {service:true,calls:[]} : loadState();
 let role='customer';
 let route='mesa';
 let category='Todos';
@@ -82,7 +87,7 @@ let selectedMethod=null;
 let toastTimer;
 const main=document.querySelector('#main');
 const sheet=document.querySelector('#sheet');
-function saveState(){try{localStorage.setItem(storageKey,JSON.stringify(state));}catch{}}
+function saveState(){if(serverMode)return;try{localStorage.setItem(storageKey,JSON.stringify(state));}catch{}}
 saveState();
 
 function dishArt(type){
@@ -106,57 +111,63 @@ function renderNav(){
   const routes=role==='customer' ? [['mesa','table','Minha mesa'],['cardapio','book','Cardápio'],['conta','receipt','Minha conta']] : [['fila','bell','Chamados'],['mesas','table','Mesas'],['historico','history','Histórico']];
   document.querySelector('#bottom-nav').innerHTML=routes.map(([id,i,label])=>`<a href="#${id}" class="nav-item ${route===id?'active':''}" ${route===id?'aria-current="page"':''}>${icon(i)}${id==='fila'&&pending?`<span class="nav-count">${pending}</span>`:''}<span>${label}</span></a>`).join('');
   document.querySelectorAll('[data-role]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.role===role)));
-  document.querySelector('.live-label').innerHTML=role==='customer'?'<span></span> Tudo a seu tempo':'<span></span> Bom atendimento, Ana';
+  document.querySelector('.live-label').innerHTML=role==='customer'?'<span></span> Tudo a seu tempo':serverMode&&!liveReady?'Acesso da equipe':`<span></span> Bom atendimento, ${escapeHTML(staffName)}`;
 }
 function activityCard(call){
   const reason=reasons.find(r=>r.id===call.reason);
   const progress=call.status==='progress';
-  return `<article class="activity-card"><div class="activity-top"><span class="activity-icon">${icon(progress?'people':reason.icon)}</span><div><strong>${reason.label}</strong><small>Mesa 08 · enviado ${timeLabel(call.created)}</small></div><span class="badge ${progress?'':'amber'}">${progress?'A caminho':'Na fila'}</span></div><p class="activity-copy">${progress?'<strong>Ana assumiu seu chamado.</strong> Já já ela chega à sua mesa.':'Seu chamado chegou à equipe. Pode ficar à vontade.'}</p></article>`;
+  return `<article class="activity-card"><div class="activity-top"><span class="activity-icon">${icon(progress?'people':reason.icon)}</span><div><strong>${reason.label}</strong><small>Mesa ${tableName(tableNumber)} · enviado ${timeLabel(call.created)}</small></div><span class="badge ${progress?'':'amber'}">${progress?'A caminho':'Na fila'}</span></div><p class="activity-copy">${progress?`<strong>${escapeHTML(call.assigned || staffName)} assumiu seu chamado.</strong> Já já a equipe chega à sua mesa.`:'Seu chamado chegou à equipe. Pode ficar à vontade.'}</p></article>`;
 }
 function renderHome(){
-  const active=state.calls.filter(c=>c.table===8&&['pending','progress'].includes(c.status));
-  main.innerHTML=`<div class="table-line"><span class="table-id">${icon('table')} Mesa 08</span><span class="badge">Aberta · 2 pessoas</span></div><section class="welcome"><div><p class="eyebrow">BOA COMIDA. BOA COMPANHIA.</p><h1>Aproveite.<br>A gente cuida<br><em>do resto.</em></h1></div>${welcomeArt}</section><button class="call-action" data-action="call"><span class="call-icon">${icon('bell')}</span><span><strong>Chamar garçom</strong><small>Precisou, é só tocar.</small></span>${icon('arrow')}</button><div class="shortcut-grid"><a href="#cardapio" class="shortcut">${icon('book')}${icon('arrowUp','small-arrow')}<strong>Nosso cardápio</strong><small>Escolha com calma.</small></a><a href="#conta" class="shortcut">${icon('receipt')}${icon('arrowUp','small-arrow')}<strong>Minha conta</strong><small>${money(totalValue())} até agora</small></a></div><section><div class="section-heading"><h2>Seu atendimento</h2>${active.length?`<span class="badge neutral">${active.length} ${active.length===1?'chamado':'chamados'}</span>`:'<span class="eyebrow" style="font-size:8px">ESTAMOS POR AQUI</span>'}</div>${active.length?`<div class="call-list">${active.map(activityCard).join('')}</div>`:`<div class="empty-note">${icon('circleCheck')}<p><strong>Tudo certo por aqui.</strong>Quando precisar, nossa equipe está a um toque.</p></div>`}</section><footer class="hospitality-note">${icon('heart')} Feito para você se sentir em casa.<span class="powered">mesa.</span></footer>`;
+  const active=state.calls.filter(c=>c.table===tableNumber&&['pending','progress'].includes(c.status));
+  main.innerHTML=`<div class="table-line"><span class="table-id">${icon('table')} Mesa ${tableName(tableNumber)}</span><span class="badge">Aberta · ${tableSeats} pessoas</span></div><section class="welcome"><div><p class="eyebrow">BOA COMIDA. BOA COMPANHIA.</p><h1>Aproveite.<br>A gente cuida<br><em>do resto.</em></h1></div>${welcomeArt}</section><button class="call-action" data-action="call"><span class="call-icon">${icon('bell')}</span><span><strong>Chamar garçom</strong><small>Precisou, é só tocar.</small></span>${icon('arrow')}</button><div class="shortcut-grid"><a href="#cardapio" class="shortcut">${icon('book')}${icon('arrowUp','small-arrow')}<strong>Nosso cardápio</strong><small>Escolha com calma.</small></a><a href="#conta" class="shortcut">${icon('receipt')}${icon('arrowUp','small-arrow')}<strong>Minha conta</strong><small>${money(totalValue())} até agora</small></a></div><section><div class="section-heading"><h2>Seu atendimento</h2>${active.length?`<span class="badge neutral">${active.length} ${active.length===1?'chamado':'chamados'}</span>`:'<span class="eyebrow" style="font-size:8px">ESTAMOS POR AQUI</span>'}</div>${active.length?`<div class="call-list">${active.map(activityCard).join('')}</div>`:`<div class="empty-note">${icon('circleCheck')}<p><strong>Tudo certo por aqui.</strong>Quando precisar, nossa equipe está a um toque.</p></div>`}</section><footer class="hospitality-note">${icon('heart')} Feito para você se sentir em casa.<span class="powered">mezô</span></footer>`;
 }
 function menuList(){
   const dishes=menu.filter(d=>(category==='Todos'||d.category===category)&&(!query||(d.name+' '+d.description).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().includes(query.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase())));
   const list=document.querySelector('#menu-list');
   if(!list)return;
-  list.innerHTML=dishes.length?dishes.map(d=>`<button class="menu-item" data-action="dish" data-id="${d.id}" aria-label="Ver ${d.name}, ${money(d.price)}"><span class="dish-art">${dishArt(d.art)}</span><span class="dish-info">${d.tag?`<span class="dish-tag">${d.tag}</span>`:''}<h3>${d.name}</h3><p>${d.description}</p><strong>${money(d.price)}</strong></span></button>`).join(''):`<div class="empty-state">${icon('search')}<h3>Nenhum prato por aqui</h3><p>Tente outro nome ou uma categoria diferente.</p><button class="secondary-button" data-action="clear-search">Limpar busca e filtros</button></div>`;
+  list.innerHTML=dishes.length?dishes.map(d=>`<button class="menu-item" data-action="dish" data-id="${escapeHTML(d.id)}" aria-label="Ver ${escapeHTML(d.name)}, ${money(d.price)}"><span class="dish-art">${dishArt(d.art)}</span><span class="dish-info">${d.tag?`<span class="dish-tag">${escapeHTML(d.tag)}</span>`:''}<h3>${escapeHTML(d.name)}</h3><p>${escapeHTML(d.description)}</p><strong>${money(d.price)}</strong></span></button>`).join(''):`<div class="empty-state">${icon('search')}<h3>Nenhum prato por aqui</h3><p>Tente outro nome ou uma categoria diferente.</p><button class="secondary-button" data-action="clear-search">Limpar busca e filtros</button></div>`;
 }
 function renderMenu(){
   main.innerHTML=`<div class="page-heading"><p class="eyebrow">FRESCO. SIMPLES. DA CASA.</p><h1>O que vai ser hoje?</h1><p>Um pouco de carinho em cada prato.</p></div><label class="search-box">${icon('search')}<input id="menu-search" type="search" placeholder="Encontre seu próximo favorito" aria-label="Buscar no cardápio" value="${escapeHTML(query)}"></label><div class="chips" aria-label="Categorias">${['Todos','Entradas','Principais','Bebidas','Sobremesas'].map(c=>`<button class="chip ${category===c?'active':''}" data-category="${c}" aria-pressed="${category===c}">${c}</button>`).join('')}</div><div class="menu-list" id="menu-list"></div><p class="menu-footer">${icon('leaf')} Tem alguma restrição alimentar? Fale com a gente.</p>`;
   menuList();
 }
 function renderBill(){
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">MESA 08 · 2 PESSOAS</p><h1>Foi bom ter você.</h1><p>Sua conta, com tudo bem explicadinho.</p></div><section class="receipt" aria-label="Consumo da mesa"><div class="receipt-head"><strong>O que veio à mesa</strong><small>5 itens</small></div><div class="receipt-lines">${receiptItems.map(item=>{const d=menu.find(d=>d.id===item.id);return `<div class="receipt-item"><span class="receipt-qty">${item.qty}×</span><div><strong>${d.name}</strong><small>${item.qty>1?`${money(d.price)} cada`:'Preparado pela casa'}</small></div><span class="item-price">${money(d.price*item.qty)}</span></div>`;}).join('')}</div><div class="receipt-totals"><div class="total-line"><span>Subtotal</span><span>${money(subtotal())}</span></div><div class="total-line"><label><input type="checkbox" id="service-toggle" ${state.service?'checked':''}> Serviço de 10% <span style="font-size:9px">(opcional)</span></label><span id="service-value">${money(serviceValue())}</span></div><div class="total-line grand"><span>Total da mesa</span><strong id="bill-total">${money(totalValue())}</strong></div></div></section><div class="section-heading"><h2>Como prefere encerrar?</h2></div><button class="primary-button" data-action="payment">Escolher pagamento ${icon('arrow')}</button><p class="payment-caption">${icon('info')} Pagamento demonstrativo · nenhuma cobrança real</p><button class="secondary-button" data-action="ask-bill">${icon('bell')} Prefiro pagar com o garçom</button><footer class="hospitality-note">${icon('heart')} Sua presença fez nosso dia.<span class="powered">mesa.</span></footer>`;
+  main.innerHTML=`<div class="page-heading"><p class="eyebrow">MESA ${tableName(tableNumber)} · ${tableSeats} PESSOAS</p><h1>Foi bom ter você.</h1><p>Sua conta, com tudo bem explicadinho.</p></div><section class="receipt" aria-label="Consumo da mesa"><div class="receipt-head"><strong>O que veio à mesa</strong><small>${receiptItems.reduce((n,i)=>n+i.qty,0)} itens</small></div><div class="receipt-lines">${receiptItems.map(item=>{const d=item.name?item:menu.find(d=>d.id===item.id);return `<div class="receipt-item"><span class="receipt-qty">${item.qty}×</span><div><strong>${escapeHTML(d.name)}</strong><small>${item.qty>1?`${money(d.price)} cada`:'Preparado pela casa'}</small></div><span class="item-price">${money(d.price*item.qty)}</span></div>`;}).join('')}</div><div class="receipt-totals"><div class="total-line"><span>Subtotal</span><span>${money(subtotal())}</span></div><div class="total-line"><label><input type="checkbox" id="service-toggle" ${state.service?'checked':''}> Serviço de 10% <span style="font-size:9px">(opcional)</span></label><span id="service-value">${money(serviceValue())}</span></div><div class="total-line grand"><span>Total da mesa</span><strong id="bill-total">${money(totalValue())}</strong></div></div></section><div class="section-heading"><h2>Como prefere encerrar?</h2></div><button class="primary-button" data-action="payment">Escolher pagamento ${icon('arrow')}</button><p class="payment-caption">${icon('info')} ${serverMode?'Pagamento online em configuração · solicite à equipe':'Pagamento demonstrativo · nenhuma cobrança real'}</p><button class="secondary-button" data-action="ask-bill">${icon('bell')} Prefiro pagar com o garçom</button><footer class="hospitality-note">${icon('heart')} Sua presença fez nosso dia.<span class="powered">mezô</span></footer>`;
 }
 function waiterCard(call){
   const r=reasons.find(r=>r.id===call.reason);
-  return `<article class="waiter-card ${call.status}" data-call="${escapeHTML(call.id)}"><div class="waiter-card-head"><span class="table-square">${tableName(call.table)}</span><div><h3>Mesa ${tableName(call.table)}</h3><small>${call.table===12?'4':'2'} pessoas · salão principal</small></div><span class="badge ${call.status==='pending'?'amber':''}">${call.status==='pending'?'Aguardando':'Com você'}</span></div><div class="waiter-message">${r.label}${call.note?`<p class="note">${escapeHTML(call.note)}</p>`:''}</div><p class="call-meta">${icon('clock')} Chamado ${timeLabel(call.created)}${call.status==='progress'?' · assumido por Ana':''}</p><button class="primary-button" data-action="${call.status==='pending'?'accept':'complete'}" data-id="${escapeHTML(call.id)}">${icon(call.status==='pending'?'arrow':'check')}${call.status==='pending'?'Assumir atendimento':'Concluir atendimento'}</button></article>`;
+  return `<article class="waiter-card ${call.status}" data-call="${escapeHTML(call.id)}"><div class="waiter-card-head"><span class="table-square">${tableName(call.table)}</span><div><h3>Mesa ${tableName(call.table)}</h3><small>${call.table===12?'4':'2'} pessoas · salão principal</small></div><span class="badge ${call.status==='pending'?'amber':''}">${call.status==='pending'?'Aguardando':(!serverMode||call.assignedId===staffID?'Com você':escapeHTML(call.assigned))}</span></div><div class="waiter-message">${r.label}${call.note?`<p class="note">${escapeHTML(call.note)}</p>`:''}</div><p class="call-meta">${icon('clock')} Chamado ${timeLabel(call.created)}${call.status==='progress'?` · assumido por ${escapeHTML(call.assigned || staffName)}`:''}</p><button class="primary-button" data-action="${call.status==='pending'?'accept':'complete'}" data-id="${escapeHTML(call.id)}" ${serverMode&&call.status==='progress'&&call.assignedId!==staffID?'disabled':''}>${icon(call.status==='pending'?'arrow':'check')}${call.status==='pending'?'Assumir atendimento':'Concluir atendimento'}</button></article>`;
 }
 function renderQueue(){
   const pending=state.calls.filter(c=>c.status==='pending');
-  const progress=state.calls.filter(c=>c.status==='progress');
-  const done=state.calls.filter(c=>c.status==='done');
-  const calls=state.calls.filter(c=>filter==='all'?['pending','progress'].includes(c.status):c.status===filter).sort((a,b)=>a.created-b.created);
-  main.innerHTML=`<div class="page-heading with-action"><div><p class="eyebrow">SEU TURNO · SALÃO PRINCIPAL</p><h1>Bom trabalho, Ana.</h1><p>Um atendimento de cada vez, com atenção.</p></div><span class="avatar" aria-label="Ana">A</span></div><div class="waiter-summary"><div class="stat"><strong>${pending.length}</strong><small>Na fila</small></div><div class="stat"><strong>${progress.length}</strong><small>Com você</small></div><div class="stat"><strong>${done.length}</strong><small>Concluídos</small></div></div><div class="chips" aria-label="Filtrar chamados">${[['all','Todos'],['pending','Aguardando'],['progress','Com você']].map(([id,label])=>`<button class="chip ${filter===id?'active':''}" data-filter="${id}" aria-pressed="${filter===id}">${label}</button>`).join('')}</div><p class="filter-summary">${calls.length} ${calls.length===1?'atendimento':'atendimentos'} · mais antigos primeiro</p><div class="call-list">${calls.length?calls.map(waiterCard).join(''):`<div class="empty-state">${icon('circleCheck')}<h3>Tudo em dia!</h3><p>${filter==='progress'?'Você ainda não assumiu nenhum chamado.':'Nenhum chamado aguardando nesta fila.'}</p></div>`}</div>`;
+  const progress=state.calls.filter(c=>c.status==='progress'&&(!serverMode||c.assignedId===staffID));
+  const done=state.calls.filter(c=>c.status==='done'&&(!serverMode||c.assignedId===staffID));
+  const calls=state.calls.filter(c=>filter==='all'?['pending','progress'].includes(c.status):c.status===filter&&(!serverMode||filter!=='progress'||c.assignedId===staffID)).sort((a,b)=>a.created-b.created);
+  main.innerHTML=`<div class="page-heading with-action"><div><p class="eyebrow">SEU TURNO · SALÃO PRINCIPAL</p><h1>Bom trabalho, ${escapeHTML(staffName)}.</h1><p>Um atendimento de cada vez, com atenção.</p></div><span class="avatar" aria-label="${escapeHTML(staffName)}">${escapeHTML(staffName.slice(0,1))}</span></div><div class="waiter-summary"><div class="stat"><strong>${pending.length}</strong><small>Na fila</small></div><div class="stat"><strong>${progress.length}</strong><small>Com você</small></div><div class="stat"><strong>${done.length}</strong><small>Concluídos</small></div></div><div class="chips" aria-label="Filtrar chamados">${[['all','Todos'],['pending','Aguardando'],['progress','Com você']].map(([id,label])=>`<button class="chip ${filter===id?'active':''}" data-filter="${id}" aria-pressed="${filter===id}">${label}</button>`).join('')}</div><p class="filter-summary">${calls.length} ${calls.length===1?'atendimento':'atendimentos'} · mais antigos primeiro</p><div class="call-list">${calls.length?calls.map(waiterCard).join(''):`<div class="empty-state">${icon('circleCheck')}<h3>Tudo em dia!</h3><p>${filter==='progress'?'Você ainda não assumiu nenhum chamado.':'Nenhum chamado aguardando nesta fila.'}</p></div>`}</div>`;
 }
 function renderTables(){
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">SALÃO PRINCIPAL</p><h1>Cada mesa importa.</h1><p>Veja quem está esperando por você.</p></div><div class="tables-grid">${Array.from({length:12},(_,i)=>i+1).map(n=>{const calls=state.calls.filter(c=>c.table===n&&['pending','progress'].includes(c.status));const occupied=[2,3,6,8,10,12].includes(n);return `<button class="table-card ${calls.length?'has-call':''}" data-action="table-details" data-table="${n}"><div class="table-card-head"><strong>${tableName(n)}</strong><span class="badge ${calls.length?'amber':occupied?'':'neutral'}">${calls.length?'Chamado':occupied?'Ocupada':'Livre'}</span></div><p>${calls.length?reasons.find(r=>r.id===calls[0].reason).label:occupied?'Aproveitando a casa':'Pronta para receber'}</p><small>${occupied?`${n===12?4:2} pessoas`:'—'}${calls.length?` · ${timeLabel(calls[0].created)}`:''}</small></button>`;}).join('')}</div>`;
+  main.innerHTML=`<div class="page-heading"><p class="eyebrow">SALÃO PRINCIPAL</p><h1>Cada mesa importa.</h1><p>Veja quem está esperando por você.</p></div><div class="tables-grid">${(serverMode?tableData.map(t=>t.number):Array.from({length:12},(_,i)=>i+1)).map(n=>{const calls=state.calls.filter(c=>c.table===n&&['pending','progress'].includes(c.status));const occupied=serverMode?!!tableData.find(t=>t.number===n)?.sessionId:[2,3,6,8,10,12].includes(n);return `<button class="table-card ${calls.length?'has-call':''}" data-action="table-details" data-table="${n}"><div class="table-card-head"><strong>${tableName(n)}</strong><span class="badge ${calls.length?'amber':occupied?'':'neutral'}">${calls.length?'Chamado':occupied?'Ocupada':'Livre'}</span></div><p>${calls.length?reasons.find(r=>r.id===calls[0].reason).label:occupied?'Aproveitando a casa':'Pronta para receber'}</p><small>${occupied?`${serverMode?tableData.find(t=>t.number===n)?.seats:n===12?4:2} pessoas`:'—'}${calls.length?` · ${timeLabel(calls[0].created)}`:''}</small></button>`;}).join('')}</div>`;
 }
 function renderHistory(){
-  const done=state.calls.filter(c=>c.status==='done').sort((a,b)=>(b.completed||b.created)-(a.completed||a.created));
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">ATENDIMENTOS DO TURNO</p><h1>Pequenos cuidados.</h1><p>${done.length} ${done.length===1?'atendimento concluído':'atendimentos concluídos'} por você.</p></div><div>${done.length?done.map(c=>`<article class="history-row">${icon('circleCheck')}<div><strong>Mesa ${tableName(c.table)} · ${reasons.find(r=>r.id===c.reason).label}</strong><small>Concluído por Ana</small></div><span>${timeLabel(c.completed||c.created)}</span></article>`).join(''):`<div class="empty-state">${icon('history')}<h3>Seu histórico começa aqui</h3><p>Os atendimentos concluídos aparecerão nesta tela.</p></div>`}</div><div class="shift-note">${icon('heart')} Cada chamado atendido faz diferença.</div>`;
+  const done=state.calls.filter(c=>c.status==='done'&&(!serverMode||c.assignedId===staffID)).sort((a,b)=>(b.completed||b.created)-(a.completed||a.created));
+  main.innerHTML=`<div class="page-heading"><p class="eyebrow">ATENDIMENTOS DO TURNO</p><h1>Pequenos cuidados.</h1><p>${done.length} ${done.length===1?'atendimento concluído':'atendimentos concluídos'} por você.</p></div><div>${done.length?done.map(c=>`<article class="history-row">${icon('circleCheck')}<div><strong>Mesa ${tableName(c.table)} · ${reasons.find(r=>r.id===c.reason).label}</strong><small>Concluído por ${escapeHTML(c.assigned || staffName)}</small></div><span>${timeLabel(c.completed||c.created)}</span></article>`).join(''):`<div class="empty-state">${icon('history')}<h3>Seu histórico começa aqui</h3><p>Os atendimentos concluídos aparecerão nesta tela.</p></div>`}</div><div class="shift-note">${icon('heart')} Cada chamado atendido faz diferença.</div>`;
 }
 function render(){
+  if(serverMode&&!liveReady)return;
   renderNav();
   const views={mesa:renderHome,cardapio:renderMenu,conta:renderBill,fila:renderQueue,mesas:renderTables,historico:renderHistory};
   (views[route]||renderHome)();
 }
-function navigate(next,focus=false){
+async function navigate(next,focus=false){
   const isWaiter=['fila','mesas','historico'].includes(next);
   role=isWaiter?'waiter':'customer';
   route=['mesa','cardapio','conta','fila','mesas','historico'].includes(next)?next:'mesa';
+  if(serverMode){
+    liveReady=false;
+    main.innerHTML='<div class="empty-state"><h3>Preparando seu lugar…</h3><p>Conectando ao restaurante.</p></div>';
+    try{await refreshLive();liveReady=true;connectLive();}catch(e){if(eventStream)eventStream.close();renderAccess(e);return;}
+  }
   render();
   window.scrollTo({top:0,behavior:'instant'});
   if(focus)main.focus({preventScroll:true});
@@ -168,38 +179,41 @@ function toast(message){
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),3400);
 }
 function openSheet(title,body){
-  sheet.innerHTML=`<div class="sheet-handle" aria-hidden="true"></div><div class="sheet-top"><h2 id="sheet-title">${title}</h2><button class="icon-button" data-action="close-sheet" aria-label="Fechar">${icon('close')}</button></div>${body}`;
+  sheet.innerHTML=`<div class="sheet-handle" aria-hidden="true"></div><div class="sheet-top"><h2 id="sheet-title">${escapeHTML(title)}</h2><button class="icon-button" data-action="close-sheet" aria-label="Fechar">${icon('close')}</button></div>${body}`;
   if(!sheet.open)sheet.showModal();
 }
 function closeSheet(){sheet.close();}
 function openCall(reason='help',note=''){
   selectedReason=reason;
-  openSheet('Como podemos ajudar?',`<p class="sheet-description">Conte o que precisa. Nossa equipe recebe seu chamado com o número da mesa.</p><div class="reason-list" role="group" aria-label="Motivo do chamado">${reasons.map(r=>`<button class="reason-button ${r.id===reason?'selected':''}" data-reason="${r.id}" aria-pressed="${r.id===reason}">${icon(r.icon)}${r.label}</button>`).join('')}</div><label class="field-label" for="call-note"><span>Quer acrescentar algo? <span style="font-size:9px">(opcional)</span></span><span id="note-count">${note.length}/140</span></label><textarea id="call-note" maxlength="140" placeholder="Ex.: uma água sem gás, por favor.">${escapeHTML(note)}</textarea><button class="primary-button" data-action="send-call">${icon('bell')} Enviar chamado</button><p class="sheet-note">Mesa 08 · seu lugar já está identificado</p>`);
+  openSheet('Como podemos ajudar?',`<p class="sheet-description">Conte o que precisa. Nossa equipe recebe seu chamado com o número da mesa.</p><div class="reason-list" role="group" aria-label="Motivo do chamado">${reasons.map(r=>`<button class="reason-button ${r.id===reason?'selected':''}" data-reason="${r.id}" aria-pressed="${r.id===reason}">${icon(r.icon)}${r.label}</button>`).join('')}</div><label class="field-label" for="call-note"><span>Quer acrescentar algo? <span style="font-size:9px">(opcional)</span></span><span id="note-count">${note.length}/140</span></label><textarea id="call-note" maxlength="140" placeholder="Ex.: uma água sem gás, por favor.">${escapeHTML(note)}</textarea><button class="primary-button" data-action="send-call">${icon('bell')} Enviar chamado</button><p class="sheet-note">Mesa ${tableName(tableNumber)} · seu lugar já está identificado</p>`);
 }
-function sendCall(){
+async function sendCall(){
+  if(serverMode){await sendLiveCall();return;}
   state=loadState();
-  const existing=state.calls.find(c=>c.table===8&&c.reason===selectedReason&&['pending','progress'].includes(c.status));
+  const existing=state.calls.find(c=>c.table===tableNumber&&c.reason===selectedReason&&['pending','progress'].includes(c.status));
   if(existing){closeSheet();render();toast('Esse chamado já está com a equipe.');return;}
   const note=sheet.querySelector('#call-note').value.trim().slice(0,140);
   const call={id:globalThis.crypto?.randomUUID?.()||`call-${Date.now()}-${Math.random().toString(36).slice(2)}`,table:8,reason:selectedReason,note,status:'pending',created:Date.now()};
   state.calls.push(call);saveState();render();
   const r=reasons.find(r=>r.id===selectedReason);
-  openSheet('Chamado enviado',`<div class="success-body"><div class="success-illustration">${icon('check')}</div><h2>Já avisamos a equipe.</h2><p>Pode continuar aproveitando.<br>Seu pedido de atendimento está na fila.</p></div><div class="success-detail"><div class="total-line"><span>Mesa</span><strong>08 · 2 pessoas</strong></div><div class="total-line"><span>Motivo</span><strong>${r.label}</strong></div></div><button class="primary-button" data-action="close-sheet">Tudo certo ${icon('check')}</button>`);
+  openSheet('Chamado enviado',`<div class="success-body"><div class="success-illustration">${icon('check')}</div><h2>Já avisamos a equipe.</h2><p>Pode continuar aproveitando.<br>Seu pedido de atendimento está na fila.</p></div><div class="success-detail"><div class="total-line"><span>Mesa</span><strong>${tableName(tableNumber)} · ${tableSeats} pessoas</strong></div><div class="total-line"><span>Motivo</span><strong>${r.label}</strong></div></div><button class="primary-button" data-action="close-sheet">Tudo certo ${icon('check')}</button>`);
   if(navigator.vibrate)navigator.vibrate(25);
 }
 function openDish(id){
   const dish=menu.find(d=>d.id===id);if(!dish)return;
-  openSheet(dish.name,`<div class="detail-art">${dishArt(dish.art)}</div><div class="dish-detail-heading"><span class="eyebrow">${dish.category}</span><strong>${money(dish.price)}</strong></div><p class="detail-description">${dish.description}</p><div>${dish.tags.map(t=>`<span class="ingredient-tag">${t}</span>`).join('')}</div><button class="primary-button" data-action="ask-dish" data-id="${dish.id}">${icon('bell')} Pedir com o garçom</button><p class="sheet-note">O garçom confirma seu pedido à mesa.</p>`);
+  openSheet(dish.name,`<div class="detail-art">${dishArt(dish.art)}</div><div class="dish-detail-heading"><span class="eyebrow">${escapeHTML(dish.category)}</span><strong>${money(dish.price)}</strong></div><p class="detail-description">${escapeHTML(dish.description)}</p><div>${dish.tags.map(t=>`<span class="ingredient-tag">${escapeHTML(t)}</span>`).join('')}</div><button class="primary-button" data-action="ask-dish" data-id="${escapeHTML(dish.id)}">${icon('bell')} Pedir com o garçom</button><p class="sheet-note">O garçom confirma seu pedido à mesa.</p>`);
 }
 function openPayment(){
+  if(serverMode){openSheet('Como encerrar sua conta?',`<p class="sheet-description">Pix e cartão online serão disponibilizados após a configuração do provedor de pagamentos.</p><button class="primary-button" data-action="ask-bill">${icon('bell')} Solicitar pagamento com a equipe</button><p class="sheet-note">Total atual: ${money(totalValue())}</p>`);return;}
   selectedMethod=null;
-  openSheet('Escolha como pagar',`<p class="sheet-description">Total da mesa 08: <strong style="color:var(--ink)">${money(totalValue())}</strong></p><div class="method-list"><button class="method-button" data-method="pix">${icon('pix')}<span><strong>Pix</strong><small>Rápido, direto do seu banco.</small></span>${icon('arrow')}</button><button class="method-button" data-method="card">${icon('card')}<span><strong>Cartão de crédito</strong><small>Escolha o cartão na próxima etapa.</small></span>${icon('arrow')}</button></div><div class="demo-info">${icon('info')}<span>Esta é uma demonstração da interface. Nenhuma cobrança será feita e nenhum dado bancário será solicitado.</span></div><button class="primary-button" data-action="simulate-payment" disabled>Selecione uma forma de pagamento</button>`);
+  openSheet('Escolha como pagar',`<p class="sheet-description">Total da mesa ${tableName(tableNumber)}: <strong style="color:var(--ink)">${money(totalValue())}</strong></p><div class="method-list"><button class="method-button" data-method="pix">${icon('pix')}<span><strong>Pix</strong><small>Rápido, direto do seu banco.</small></span>${icon('arrow')}</button><button class="method-button" data-method="card">${icon('card')}<span><strong>Cartão de crédito</strong><small>Escolha o cartão na próxima etapa.</small></span>${icon('arrow')}</button></div><div class="demo-info">${icon('info')}<span>Esta é uma demonstração da interface. Nenhuma cobrança será feita e nenhum dado bancário será solicitado.</span></div><button class="primary-button" data-action="simulate-payment" disabled>Selecione uma forma de pagamento</button>`);
 }
 function simulatePayment(){
   if(!selectedMethod)return;
   openSheet('Prévia do pagamento',`<div class="success-body"><div class="success-illustration">${icon(selectedMethod==='pix'?'pix':'card')}</div><h2>Tudo pronto por aqui.</h2><p>Esta seria a etapa de pagamento por ${selectedMethod==='pix'?'Pix':'cartão'}. A integração será feita depois.</p></div><div class="success-detail"><div class="total-line"><span>Total da mesa</span><strong>${money(totalValue())}</strong></div><div class="total-line"><span>Forma escolhida</span><strong>${selectedMethod==='pix'?'Pix':'Cartão de crédito'}</strong></div></div><div class="demo-info">${icon('info')}<span>Sua conta permanece aberta. Nenhum pagamento foi realizado.</span></div><button class="primary-button" data-action="close-sheet">Voltar para minha conta</button>`);
 }
-function callStatus(action,id){
+async function callStatus(action,id){
+  if(serverMode){try{await api(`/calls/${encodeURIComponent(id)}/${action}`,{});await refreshLive();render();toast(action==='accept'?'Atendimento com você.':'Atendimento concluído.');}catch(e){toast(e.message);await refreshLive().catch(()=>{});render();}return;}
   state=loadState();
   const call=state.calls.find(c=>c.id===id);
   if(!call)return;
@@ -208,13 +222,15 @@ function callStatus(action,id){
   else {render();toast('Esse atendimento já foi atualizado.');}
 }
 function openTableDetails(n){
+  if(serverMode){openLiveTable(n);return;}
   const calls=state.calls.filter(c=>c.table===n&&['pending','progress'].includes(c.status));
   openSheet(`Mesa ${tableName(n)}`,calls.length?`<p class="sheet-description">${calls.length} ${calls.length===1?'chamado ativo':'chamados ativos'} nesta mesa.</p><div class="call-list">${calls.map(waiterCard).join('')}</div>`:`<div class="empty-state" style="margin-bottom:12px">${icon('circleCheck')}<h3>Nenhum chamado ativo.</h3><p>O atendimento desta mesa está em dia.</p></div><button class="primary-button" data-action="close-sheet">Tudo certo</button>`);
 }
 function openOptions(){
+  if(serverMode){openSheet('Mezô · à sua mesa',`<p class="sheet-description">${escapeHTML(restaurantName)}<br>Seu atendimento e sua conta acompanham esta mesa.</p><div class="option-list"><button data-action="switch-role">${icon('people')} ${role==='customer'?'Entrar como equipe':'Ver minha mesa'}</button>${role==='waiter'?`<button data-action="logout">${icon('lock')} Sair da equipe</button>`:''}<a href="/admin">Administração Mezô →</a></div>`);return;}
   openSheet('À vontade, sempre.',`<p class="sheet-description">Casa do Sol · cozinha & boa companhia.<br>Estamos aqui para cuidar da sua experiência.</p><div class="option-list"><button data-action="about">${icon('info')} Sobre esta prévia</button><button data-action="switch-role">${icon('people')} ${role==='customer'?'Ver painel do garçom':'Voltar para a visão do cliente'}</button><button data-action="reset-confirm">${icon('reset')} Reiniciar demonstração</button></div>`);
 }
-document.addEventListener('click',event=>{
+document.addEventListener('click',async event=>{
   const target=event.target.closest('button, a');if(!target)return;
   if(target.dataset.role){closeSheet();location.hash=target.dataset.role==='waiter'?'fila':'mesa';return;}
   if(target.dataset.reason){selectedReason=target.dataset.reason;sheet.querySelectorAll('[data-reason]').forEach(b=>{b.classList.toggle('selected',b.dataset.reason===selectedReason);b.setAttribute('aria-pressed',String(b.dataset.reason===selectedReason));});return;}
@@ -222,11 +238,12 @@ document.addEventListener('click',event=>{
   if(target.dataset.filter){filter=target.dataset.filter;renderQueue();return;}
   if(target.dataset.method){selectedMethod=target.dataset.method;sheet.querySelectorAll('[data-method]').forEach(b=>{b.classList.toggle('selected',b.dataset.method===selectedMethod);b.setAttribute('aria-pressed',String(b.dataset.method===selectedMethod));});const b=sheet.querySelector('[data-action="simulate-payment"]');b.disabled=false;b.innerHTML=`Ver prévia com ${selectedMethod==='pix'?'Pix':'cartão'} ${icon('arrow')}`;return;}
   const action=target.dataset.action;
+  if(serverMode&&['login','logout','consumption','close-table','confirm-close','open-table'].includes(action)){event.preventDefault();await liveAction(action,target);return;}
   if(action==='call')openCall();
   else if(action==='close-sheet')closeSheet();
   else if(action==='send-call')sendCall();
   else if(action==='dish')openDish(target.dataset.id);
-  else if(action==='ask-dish'){const dish=menu.find(d=>d.id===target.dataset.id);openCall('order',`Gostaria de pedir: ${dish.name}.`);}
+  else if(action==='ask-dish'){const dish=menu.find(d=>d.id===target.dataset.id);openCall('order',`Gostaria de pedir: ${escapeHTML(dish.name)}.`);}
   else if(action==='payment')openPayment();
   else if(action==='simulate-payment')simulatePayment();
   else if(action==='ask-bill')openCall('bill');
@@ -242,15 +259,15 @@ document.addEventListener('input',event=>{
   if(event.target.id==='menu-search'){query=event.target.value;menuList();}
   if(event.target.id==='call-note')sheet.querySelector('#note-count').textContent=`${event.target.value.length}/140`;
 });
-document.addEventListener('change',event=>{
-  if(event.target.id==='service-toggle'){state=loadState();state.service=event.target.checked;saveState();document.querySelector('#service-value').textContent=money(serviceValue());document.querySelector('#bill-total').textContent=money(totalValue());}
+document.addEventListener('change',async event=>{
+  if(event.target.id==='service-toggle'){if(serverMode){try{await api('/service',{enabled:event.target.checked});await refreshLive();render();}catch(e){toast(e.message);await refreshLive().catch(()=>{});render();}return;}state=loadState();state.service=event.target.checked;saveState();document.querySelector('#service-value').textContent=money(serviceValue());document.querySelector('#bill-total').textContent=money(totalValue());}
 });
 document.querySelector('#more-button').addEventListener('click',openOptions);
 sheet.addEventListener('click',event=>{
   if(event.target===sheet){const r=sheet.getBoundingClientRect();if(event.clientY<r.top||event.clientY>r.bottom||event.clientX<r.left||event.clientX>r.right)closeSheet();}
 });
 window.addEventListener('hashchange',()=>navigate(location.hash.slice(1),true));
-window.addEventListener('storage',event=>{if(event.key===storageKey){state=loadState();render();}});
+window.addEventListener('storage',event=>{if(!serverMode&&event.key===storageKey){state=loadState();render();}});
 setInterval(()=>{if(!sheet.open&&document.activeElement?.tagName!=='INPUT'&&document.activeElement?.tagName!=='TEXTAREA')render();},60000);
 document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
-navigate(location.hash.slice(1)||'mesa');
+navigate(location.hash.slice(1)||(serverMode&&location.pathname.endsWith('/equipe')?'fila':'mesa'));

@@ -1,22 +1,78 @@
-# Mesa · Casa do Sol
+# Mezô · à sua mesa
 
-Interface responsiva, em português, para atendimento de restaurante pelo celular. Casa do Sol é um estabelecimento fictício usado no protótipo.
+Aplicação para atendimento de restaurantes pelo celular. Monólito Go + Echo, PostgreSQL 17, pgx, migrações Goose e painel administrativo com html/template + HTMX. A interface da mesa e da equipe preserva o protótipo existente e usa a API Go e eventos SSE.
 
-## Abrir
+## Experimentar neste computador
 
-Sirva a pasta `dist` com qualquer servidor HTTP estático. Exemplo: `python -m http.server 4173 --directory dist`.
+Execute na pasta deste projeto:
 
-## Fluxos
+```powershell
+.\scripts\dev.ps1
+```
 
-- Cliente: mesa, chamada de garçom com motivo, cardápio com categorias e detalhes, conta com serviço opcional e seleção de pagamento demonstrativo.
-- Garçom: fila de chamados, filtros, assumir e concluir atendimento, histórico e visão das mesas.
-- Os chamados são salvos no navegador, com sincronização entre abas do mesmo navegador/origem. Não há autenticação, backend, envio de notificações push ou cobrança real.
-- O botão de opções permite reiniciar a demonstração. Valores monetários são calculados em centavos.
+O script reconhece o Go portátil preparado neste workspace, usa o PostgreSQL 17 instalado, inicia um cluster próprio em `../../work/mezo-runtime/postgres` na porta 55432 e deixa o servidor em `http://127.0.0.1:4173`. Para outro computador, instale Go 1.27 e PostgreSQL 17 ou informe `-GoExe` e `-PostgresBin`.
 
-## Arquivos
+Abra `/admin`. E-mails e senhas locais gerados estão em `LOCAL-ACCESS.md`, excluído do Git. O painel oferece os links das mesas, QR codes, acesso da equipe e cadastro de restaurantes, atendentes e cardápio. A conta administrativa inicial é criada uma vez; mudar ADMIN_PASSWORD posteriormente não altera uma conta existente.
 
-- `dist/index.html`: estrutura da página.
-- `dist/styles.css`: interface e adaptações responsivas.
-- `dist/app.js`: navegação, dados e interações locais.
+O exemplo local Casa do Sol possui 12 mesas, Ana e cardápio fictício. A mesa 8 recebe o consumo de exemplo do protótipo. Esses registros ficam no PostgreSQL; não há chamados falsos pré-carregados. O seed depende de `SEED_DEMO=true` e não é ativado pelo Compose.
 
-O cliente e o garçom compartilham dados somente neste navegador. Esta entrega permite avaliar a interface antes das decisões sobre backend e banco.
+Para parar os processos deste projeto:
+
+```powershell
+.\scripts\stop.ps1
+```
+
+## Separação dos tenants
+
+Uma única aplicação atende todos os restaurantes. Na mesma instância PostgreSQL:
+
+- `mezo_control`: cadastro dos restaurantes, administradores da plataforma e sessões de acesso.
+- `mezo_t_<id>`: um banco por restaurante, com equipe, mesas, sessões da mesa, cardápio, consumo, chamados e eventos.
+- `mezo_u_<id>`: um usuário PostgreSQL por restaurante, sem superuser, criação de bancos ou usuários.
+
+O servidor procura o banco no catálogo central e confere a sessão e o tenant antes de conectar. A URL, o número da mesa ou um campo enviado pelo navegador não concedem acesso. A conexão pública é removida de todos os bancos gerenciados. Senhas dos bancos dos restaurantes são cifradas com AES-GCM usando APP_SECRET. Senhas humanas usam bcrypt; cookies HttpOnly possuem validade de oito horas, verificação de origem e CSRF nas alterações.
+
+Todos os bancos pertencem à **mesma pasta de dados do PostgreSQL**. O PostgreSQL organiza internamente os arquivos por identificadores em `PGDATA/base`; não há arquivo SQLite ou pasta manual com o nome do restaurante. No Compose, a pasta comum é `./databases`. O banco central compartilha essa instância. Consulte a [organização dos arquivos do PostgreSQL](https://www.postgresql.org/docs/current/storage-file-layout.html).
+
+O catálogo e as permissões são criados pelo provisionador configurado em DATABASE_ADMIN_URL. As consultas usam o usuário limitado do banco central ou o usuário próprio do restaurante. O segredo do provisionador fica no servidor. Pools têm até três conexões; o cache limita a 16 pools e remove pools ociosos quando necessário.
+
+## Fluxos funcionando
+
+- Cliente entra por `/r/<restaurante>/m/<token-aleatorio-da-mesa>`, a mesma URL usada no QR code e etiqueta NFC. A equipe abre e encerra as sessões da mesa.
+- Equipe entra por `/r/<restaurante>/equipe`, com login exclusivo daquele restaurante.
+- Chamados ficam no banco, entram na fila por idade e atualizam a interface via SSE. Apenas um atendente consegue assumir cada chamado e somente ele pode concluí-lo. Chamados ativos repetidos do mesmo motivo não são duplicados.
+- A equipe registra consumo confirmado. Nome e preço são copiados do cardápio no servidor e preservados na conta. O cliente acompanha subtotal, serviço opcional e total calculados em centavos no backend.
+- Encerrar a conta presencial invalida o acesso àquela sessão. Reabrir a mesa cria uma conta nova, sem consumo ou chamados da conta anterior.
+- Administradores da plataforma cadastram restaurantes, atendentes e itens do cardápio e geram QR codes localmente, sem enviar links para serviços externos.
+
+## Docker e hospedagem
+
+Copie `.env.example` para `.env`. Preencha POSTGRES_PASSWORD e APP_SECRET com segredos aleatórios em hexadecimal e ADMIN_EMAIL/ADMIN_PASSWORD com o acesso inicial. Configure APP_ORIGIN para a origem exata da aplicação; localmente, `http://127.0.0.1:4173`.
+
+```sh
+docker compose up -d --build
+```
+
+O PostgreSQL não expõe porta externa. Todos os bancos ficam no bind mount `./databases`; a aplicação fica na porta 4173 do loopback. A imagem usa binário único com interface, templates e migrações embutidos. O Compose foi preparado; como o Docker Desktop estava desligado, a execução foi verificada com Go e PostgreSQL nativos.
+
+Para hospedar o backend, use uma VPS com Docker/PostgreSQL e proxy HTTPS, por exemplo Caddy, direcionado para `127.0.0.1:4173`. Configure APP_ORIGIN com o domínio HTTPS antes de imprimir placas: os QR codes usam essa origem e os cookies passam a usar Secure. Uma instância Go atende o SSE desta versão. Para várias réplicas, substitua o hub em memória por eventos compartilhados, por exemplo PostgreSQL LISTEN/NOTIFY.
+
+Faça backup de cada banco e do catálogo com `pg_dump`, dos usuários/permissões com `pg_dumpall --globals-only` e guarde APP_SECRET junto dos segredos de recuperação. Copiar a pasta de um PostgreSQL em execução não substitui um backup consistente. `.env`, LOCAL-ACCESS.md e `databases` estão excluídos do Git e da imagem.
+
+## Verificação
+
+```powershell
+$env:MEZO_INTEGRATION = '1'
+go test -v ./...
+go vet ./...
+```
+
+O teste de integração cria dois restaurantes temporários no cluster configurado e remove somente seus próprios bancos/usuários. Verifica isolamento por API e PostgreSQL, autenticação, CSRF, chamados simultâneos, disputa entre atendentes, cálculo de consumo, persistência em uma nova instância Go e encerramento/reabertura sem vazamento. O teste do hub verifica a separação dos eventos. Sem MEZO_INTEGRATION=1, o teste PostgreSQL é pulado.
+
+## Estado da integração
+
+O backend funciona localmente. Pix/cartão dependem de provedor, contas recebedoras por restaurante e webhooks; a interface informa que o pagamento online está em configuração e permite chamar a equipe. SSE atualiza páginas abertas. Push com a página fechada ainda não foi integrado. A equipe comunica pedidos à cozinha presencialmente; não há sistema de cozinha nesta etapa.
+
+A publicação privada em Sites permanece uma **demonstração estática**, agora com a marca Mezô. Esse ambiente serve `dist`, não executa o monólito Go nem conecta a este PostgreSQL. A demonstração usa armazenamento local e identifica ações simuladas; o Go insere o marcador de execução real e usa exclusivamente a API.
+
+HTMX 2.0.8 está incluído em `dist/htmx.min.js`; sua licença está em `dist/htmx.LICENSE`.

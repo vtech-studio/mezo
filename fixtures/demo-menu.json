@@ -1,0 +1,99 @@
+[
+  {
+    "id": "burrata",
+    "name": "Burrata da casa",
+    "description": "Tomates assados, pesto de manjericão e pão de fermentação natural.",
+    "price": 3800,
+    "category": "Entradas",
+    "art": "burrata",
+    "tag": "Favorito da casa",
+    "tags": [
+      "Vegetariano",
+      "Contém leite e glúten"
+    ]
+  },
+  {
+    "id": "croqueta",
+    "name": "Croquetas de costela",
+    "description": "Crocantes por fora, cremosas por dentro. Com maionese de ervas.",
+    "price": 2800,
+    "category": "Entradas",
+    "art": "croqueta",
+    "tags": [
+      "4 unidades",
+      "Contém glúten e ovos"
+    ]
+  },
+  {
+    "id": "risoto",
+    "name": "Risoto de cogumelos",
+    "description": "Arroz arbóreo, mix de cogumelos, parmesão e um toque de vinho branco.",
+    "price": 5800,
+    "category": "Principais",
+    "art": "risoto",
+    "tag": "Feito com carinho",
+    "tags": [
+      "Vegetariano",
+      "Contém leite"
+    ]
+  },
+  {
+    "id": "peixe",
+    "name": "Peixe do dia",
+    "description": "Grelhado com manteiga de limão, purê de batata e legumes da estação.",
+    "price": 6800,
+    "category": "Principais",
+    "art": "peixe",
+    "tags": [
+      "Consulte a espécie",
+      "Contém peixe e leite"
+    ]
+  },
+  {
+    "id": "bife",
+    "name": "Bife & batatas",
+    "description": "Filé grelhado, batatas rústicas e molho de mostarda da casa.",
+    "price": 7400,
+    "category": "Principais",
+    "art": "bife",
+    "tags": [
+      "Contém mostarda",
+      "Escolha o ponto com o garçom"
+    ]
+  },
+  {
+    "id": "limonada",
+    "name": "Limonada da casa",
+    "description": "Limão fresquinho, hortelã e um pouquinho de doçura.",
+    "price": 1200,
+    "category": "Bebidas",
+    "art": "drink",
+    "tags": [
+      "350 ml",
+      "Sem álcool"
+    ]
+  },
+  {
+    "id": "agua",
+    "name": "Água mineral",
+    "description": "Com ou sem gás. Servida bem gelada.",
+    "price": 700,
+    "category": "Bebidas",
+    "art": "water",
+    "tags": [
+      "500 ml",
+      "Sem álcool"
+    ]
+  },
+  {
+    "id": "brownie",
+    "name": "Brownie quentinho",
+    "description": "Chocolate intenso, sorvete de baunilha e calda feita aqui.",
+    "price": 2400,
+    "category": "Sobremesas",
+    "art": "brownie",
+    "tags": [
+      "Contém leite, ovos e glúten"
+    ]
+  }
+]

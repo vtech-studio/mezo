@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: mezo_provisioner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./databases:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mezo_provisioner -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+  app:
+    build: .
+    environment:
+      DATABASE_ADMIN_URL: postgres://mezo_provisioner:${POSTGRES_PASSWORD}@postgres:5432/postgres?sslmode=disable
+      APP_SECRET: ${APP_SECRET:?Defina APP_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Defina ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Defina ADMIN_PASSWORD}
+      APP_ORIGIN: ${APP_ORIGIN:?Defina APP_ORIGIN}
+      LISTEN_ADDR: 0.0.0.0:4173
+    ports:
+      - "127.0.0.1:4173:4173"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped

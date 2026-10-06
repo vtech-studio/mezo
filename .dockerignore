@@ -1,0 +1,11 @@
+.git
+.sites-runtime
+.sites-checkout
+.env
+.env.*
+LOCAL-ACCESS.md
+databases
+work
+bin
+*.exe
+*.log
