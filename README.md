@@ -40,7 +40,7 @@ O catálogo e as permissões são criados pelo provisionador configurado em DATA
 
 - Cliente entra por `/r/<restaurante>/m/<token-aleatorio-da-mesa>`, a mesma URL usada no QR code e etiqueta NFC. A equipe abre e encerra as sessões da mesa.
 - Equipe entra por `/r/<restaurante>/equipe`, com login exclusivo daquele restaurante.
-- Chamados ficam no banco, entram na fila por idade e atualizam a interface via SSE. Apenas um atendente consegue assumir cada chamado e somente ele pode concluí-lo. Chamados ativos repetidos do mesmo motivo não são duplicados.
+- Chamados ficam no banco, entram na fila por idade e atualizam a interface via SSE. Todos os chamados ativos são retornados junto dos 100 atendimentos encerrados mais recentes. Apenas um atendente consegue assumir cada chamado e somente ele pode concluí-lo. Chamados ativos repetidos do mesmo motivo não são duplicados.
 - A equipe registra consumo confirmado. Nome e preço são copiados do cardápio no servidor e preservados na conta. O cliente acompanha subtotal, serviço opcional e total calculados em centavos no backend.
 - Encerrar a conta presencial invalida o acesso àquela sessão. Reabrir a mesa cria uma conta nova, sem consumo ou chamados da conta anterior.
 - Administradores da plataforma cadastram restaurantes, atendentes e itens do cardápio e geram QR codes localmente, sem enviar links para serviços externos.

@@ -194,6 +194,26 @@ func TestPostgresIsolationAndRestaurantFlow(t *testing.T) {
 		expect(v, 200)
 	}
 	id := read(created[0])["id"].(string)
+	historyPool, historyRelease, err := a.lease(ctx, ta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = historyPool.Exec(ctx, "INSERT INTO calls(id,session_id,reason,status,created_at) SELECT 'history-test-'||n,s.id,'water','done',now()+interval '1 minute' FROM generate_series(1,310) n,table_sessions s WHERE s.table_number=1 AND s.closed_at IS NULL")
+	historyRelease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueResponse := request("GET", "/api/r/"+ta.Slug+"/bootstrap?role=staff", nil, staff1, "")
+	expect(queueResponse, 200)
+	visible := false
+	for _, v := range read(queueResponse)["calls"].([]any) {
+		if v.(map[string]any)["id"] == id {
+			visible = true
+		}
+	}
+	if !visible {
+		t.Fatal("histórico extenso ocultou um chamado ativo")
+	}
 	if read(created[1])["id"] != id {
 		t.Fatal("chamados duplicados concorrentes")
 	}

@@ -50,7 +50,8 @@ func (a *App) bootstrap(c echo.Context) error {
 		where = " WHERE s.id=$1"
 		args = append(args, x.Session.Subject)
 	}
-	rows, err := x.Pool.Query(ctx, "SELECT c.id,c.session_id,s.table_number,c.reason,c.note,c.status,(extract(epoch FROM c.created_at)*1000)::bigint,COALESCE((extract(epoch FROM c.accepted_at)*1000)::bigint,0),COALESCE((extract(epoch FROM c.completed_at)*1000)::bigint,0),COALESCE(u.name,''),COALESCE(c.assigned_to,'') FROM calls c JOIN table_sessions s ON s.id=c.session_id LEFT JOIN staff u ON u.id=c.assigned_to"+where+" ORDER BY c.created_at DESC LIMIT 300", args...)
+	// Keep every active call visible even after the restaurant accumulates a long history.
+	rows, err := x.Pool.Query(ctx, "WITH visible_calls AS (SELECT * FROM calls WHERE status IN ('pending','progress') UNION ALL (SELECT * FROM calls WHERE status NOT IN ('pending','progress') ORDER BY created_at DESC LIMIT 100)) SELECT c.id,c.session_id,s.table_number,c.reason,c.note,c.status,(extract(epoch FROM c.created_at)*1000)::bigint,COALESCE((extract(epoch FROM c.accepted_at)*1000)::bigint,0),COALESCE((extract(epoch FROM c.completed_at)*1000)::bigint,0),COALESCE(u.name,''),COALESCE(c.assigned_to,'') FROM visible_calls c JOIN table_sessions s ON s.id=c.session_id LEFT JOIN staff u ON u.id=c.assigned_to"+where+" ORDER BY c.created_at DESC", args...)
 	if err != nil {
 		return err
 	}
