@@ -76,6 +76,7 @@ document.querySelector('.preview-note').hidden=serverMode;
 const tenantSlug=serverMode ? location.pathname.split('/')[2] : '';
 let tableNumber=8, tableSeats=2, staffName='Ana', staffID='', restaurantName='Casa do Sol';
 let tableData=[], csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
+let liveTransport='events', livePollTimer=null;
 let state=serverMode ? {service:true,calls:[]} : loadState();
 let role='customer';
 let route='mesa';
@@ -166,7 +167,7 @@ async function navigate(next,focus=false){
   if(serverMode){
     liveReady=false;
     main.innerHTML='<div class="empty-state"><h3>Preparando seu lugar…</h3><p>Conectando ao restaurante.</p></div>';
-    try{await refreshLive();liveReady=true;connectLive();}catch(e){if(eventStream)eventStream.close();renderAccess(e);return;}
+    try{await refreshLive();liveReady=true;connectLive();}catch(e){if(eventStream)eventStream.close();clearInterval(livePollTimer);renderAccess(e);return;}
   }
   render();
   window.scrollTo({top:0,behavior:'instant'});

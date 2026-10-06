@@ -10,3 +10,5 @@ work/
 bin/
 *.exe
 LOCAL-ACCESS.md
+.vercel/
+/server

@@ -37,6 +37,10 @@ func (a *App) bootstrap(c echo.Context) error {
 	defer x.Release()
 	ctx := c.Request().Context()
 	out := map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name, "slug": x.Tenant.Slug}, "csrf": x.Session.CSRF, "role": kind, "paymentsEnabled": false}
+	out["realtime"] = "events"
+	if a.cfg.Serverless {
+		out["realtime"] = "poll"
+	}
 	if kind == "staff" {
 		var name, role string
 		if err = x.Pool.QueryRow(ctx, "SELECT name,role FROM staff WHERE id=$1", x.Session.Subject).Scan(&name, &role); err != nil {

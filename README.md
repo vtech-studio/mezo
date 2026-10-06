@@ -59,6 +59,35 @@ Para hospedar o backend, use uma VPS com Docker/PostgreSQL e proxy HTTPS, por ex
 
 Faça backup de cada banco e do catálogo com `pg_dump`, dos usuários/permissões com `pg_dumpall --globals-only` e guarde APP_SECRET junto dos segredos de recuperação. Copiar a pasta de um PostgreSQL em execução não substitui um backup consistente. `.env`, LOCAL-ACCESS.md e `databases` estão excluídos do Git e da imagem.
 
+## Vercel
+
+O projeto inclui `vercel.json` com o preset Go, build do servidor e região São Paulo (`gru1`). A aplicação aceita a porta fornecida em `PORT`; não configure `LISTEN_ADDR` na Vercel. O preset executa o servidor HTTP existente. Consulte a [documentação oficial do runtime Go](https://vercel.com/docs/functions/runtimes/go).
+
+O PostgreSQL precisa ficar em um serviço externo que permita criar bancos e usuários e conectar diretamente a cada banco. A credencial provisionadora precisa de `CREATEDB`, `CREATEROLE` e permissão para administrar os usuários que cria. PostgreSQL 17 é a versão verificada. Não use a URL do banco local nem envie a pasta `databases` para a Vercel. Em um serviço gerenciado, o provedor administra a pasta física comum do PostgreSQL.
+
+Importe o repositório GitHub e configure estas variáveis no ambiente de produção antes do deploy:
+
+| Variável | Valor |
+| --- | --- |
+| `DATABASE_ADMIN_URL` | Conexão direta ao PostgreSQL hospedado, com TLS e credencial provisionadora |
+| `APP_SECRET` | Segredo aleatório com pelo menos 32 caracteres; preserve o mesmo valor nos próximos deploys |
+| `ADMIN_EMAIL` | E-mail do administrador inicial da plataforma |
+| `ADMIN_PASSWORD` | Senha inicial de 12 a 72 bytes |
+| `APP_ORIGIN` | Origem HTTPS exata e estável da produção, sem caminho |
+| `SEED_DEMO` | `false` para começar sem restaurante fictício |
+
+Guarde credenciais como variáveis sensíveis. Para uma demonstração com Casa do Sol, use `SEED_DEMO=true` e defina também `DEMO_STAFF_PASSWORD`; são dados fictícios. A alteração de `ADMIN_PASSWORD` não redefine uma conta já criada. Não compartilhe o banco de produção com deploys de prévia: use outro projeto PostgreSQL e outros segredos para testar mudanças.
+
+Na Vercel, a interface consulta o banco a cada cinco segundos enquanto a página está visível. Isso permite receber chamados entre diferentes instâncias de execução. O modo local continua usando SSE. As conexões ficam em pools por instância; dimensione o limite do PostgreSQL considerando o número de instâncias, restaurantes ativos e conexões administrativas.
+
+Depois de publicar, entre em `/admin`, cadastre o restaurante, abra sua mesa pela equipe e baixe o QR code no painel. Para criar também a placa com a marca Mezô a partir da URL real da mesa:
+
+```sh
+go run ./cmd/qr -url 'https://SEU-DOMINIO/r/RESTAURANTE/m/TOKEN-DA-MESA' -table 8 -out qr-mezo-mesa-08
+```
+
+O comando gera PNG e SVG para impressão. Use o link da mesa fornecido pelo painel; o token é aleatório. Confirme o acesso em um celular antes de imprimir a placa.
+
 ## Verificação
 
 ```powershell
@@ -67,7 +96,7 @@ go test -v ./...
 go vet ./...
 ```
 
-O teste de integração cria dois restaurantes temporários no cluster configurado e remove somente seus próprios bancos/usuários. Verifica isolamento por API e PostgreSQL, autenticação, CSRF, chamados simultâneos, disputa entre atendentes, cálculo de consumo, persistência em uma nova instância Go e encerramento/reabertura sem vazamento. O teste do hub verifica a separação dos eventos. Sem MEZO_INTEGRATION=1, o teste PostgreSQL é pulado.
+O teste de integração cria dois restaurantes temporários no cluster configurado e remove somente seus próprios bancos/usuários. Verifica isolamento por API e PostgreSQL, autenticação, CSRF, chamados simultâneos, disputa entre atendentes, cálculo de consumo, persistência em uma nova instância Go e encerramento/reabertura sem vazamento. Um teste adicional verifica a criação de restaurante por um provisionador com CREATEDB/CREATEROLE e sem superuser, usando um usuário temporário criado pela fixture local. O teste do hub verifica a separação dos eventos; o teste de configuração verifica PORT e HTTPS na Vercel. Sem MEZO_INTEGRATION=1, os testes PostgreSQL são pulados.
 
 ## Estado da integração
 

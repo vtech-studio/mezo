@@ -7,6 +7,7 @@ async function api(path,body){
 async function refreshLive(){
   const data=await api(`/bootstrap?role=${role==='waiter'?'staff':'customer'}`);
   csrf=data.csrf;restaurantName=data.restaurant.name;menu=data.menu;state={calls:data.calls,service:data.service??true};
+  liveTransport=data.realtime||'events';
   if(data.table){tableNumber=data.table.number;tableSeats=data.table.seats;receiptItems=data.items;liveTotals=data.totals;}
   if(data.staff){staffName=data.staff.name;staffID=data.staff.id;tableData=data.tables;}
   document.querySelector('.restaurant>span:last-child').innerHTML=`${escapeHTML(restaurantName)}<small>À SUA MESA COM MEZÔ</small>`;
@@ -14,8 +15,20 @@ async function refreshLive(){
   document.title=`Mezô · ${restaurantName}`;
 }
 function connectLive(){
+  clearInterval(livePollTimer);
   if(eventStream)eventStream.close();
   const currentRole=role;
+  if(liveTransport==='poll'){
+    let pending=false;
+    livePollTimer=setInterval(async()=>{
+      if(pending||role!==currentRole||document.hidden||!liveReady)return;
+      pending=true;
+      try{await refreshLive();if(!sheet.open&&document.activeElement?.id!=='menu-search')render();else renderNav();}
+      catch(e){if([401,410].includes(e.status)){clearInterval(livePollTimer);liveReady=false;closeSheet();renderAccess(e);}else document.querySelector('.live-label').textContent='Reconectando…';}
+      finally{pending=false;}
+    },5000);
+    return;
+  }
   eventStream=new EventSource(`/api/r/${encodeURIComponent(tenantSlug)}/events?role=${role==='waiter'?'staff':'customer'}`);
   eventStream.addEventListener('update',async()=>{
     if(role!==currentRole)return;
@@ -56,7 +69,7 @@ async function liveAction(action,target){
       if(!email||!password){document.querySelector('#login-error').textContent='Preencha e-mail e senha.';return;}
       await api('/login',{email,password});await navigate('fila');return;
     }
-    if(action==='logout'){await api('/logout',{});closeSheet();liveReady=false;if(eventStream)eventStream.close();renderAccess(new Error('Entre para continuar'));return;}
+    if(action==='logout'){await api('/logout',{});closeSheet();liveReady=false;if(eventStream)eventStream.close();clearInterval(livePollTimer);renderAccess(new Error('Entre para continuar'));return;}
     const n=Number(target.dataset.table);
     if(action==='consumption'){await api(`/tables/${n}/consumption`,{menuId:sheet.querySelector('#consumption-item').value,qty:Number(sheet.querySelector('#consumption-qty').value)});await refreshLive();openLiveTable(n);toast('Consumo registrado na conta.');return;}
     if(action==='confirm-close')await api(`/tables/${n}/close`,{confirmed:true});

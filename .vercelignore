@@ -1,0 +1,14 @@
+.git
+.openai
+.sites-runtime
+.sites-checkout
+.env
+.env.*
+!.env.example
+LOCAL-ACCESS.md
+databases
+work
+bin
+*.exe
+*.log
+node_modules

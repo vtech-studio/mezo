@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,17 +27,33 @@ import (
 type Config struct {
 	AdminURL, Secret, AdminEmail, AdminPassword, Listen, Origin string
 	Secure                                                      bool
+	Serverless                                                  bool
 }
 
 func loadConfig() (Config, error) {
 	c := Config{AdminURL: os.Getenv("DATABASE_ADMIN_URL"), Secret: os.Getenv("APP_SECRET"), AdminEmail: strings.ToLower(os.Getenv("ADMIN_EMAIL")), AdminPassword: os.Getenv("ADMIN_PASSWORD"), Listen: os.Getenv("LISTEN_ADDR"), Origin: strings.TrimRight(os.Getenv("APP_ORIGIN"), "/")}
 	if c.Listen == "" {
-		c.Listen = "127.0.0.1:4173"
+		if port := os.Getenv("PORT"); port != "" {
+			n, err := strconv.Atoi(port)
+			if err != nil || n < 1 || n > 65535 {
+				return c, errors.New("PORT inválida")
+			}
+			c.Listen = ":" + port
+		} else {
+			c.Listen = "127.0.0.1:4173"
+		}
 	}
+	c.Serverless = os.Getenv("VERCEL") == "1"
 	if c.Origin == "" {
+		if c.Serverless {
+			return c, errors.New("defina APP_ORIGIN com a URL HTTPS de produção na Vercel")
+		}
 		c.Origin = "http://127.0.0.1:4173"
 	}
 	c.Secure = strings.HasPrefix(c.Origin, "https://")
+	if c.Serverless && !c.Secure {
+		return c, errors.New("APP_ORIGIN deve usar HTTPS na Vercel")
+	}
 	if c.AdminURL == "" || len(c.Secret) < 32 || c.AdminEmail == "" || len(c.AdminPassword) < 12 || len(c.AdminPassword) > 72 {
 		return c, errors.New("defina DATABASE_ADMIN_URL, APP_SECRET (32+ caracteres), ADMIN_EMAIL e ADMIN_PASSWORD (12–72 bytes)")
 	}
@@ -152,6 +169,11 @@ func newApp(ctx context.Context, cfg Config) (*App, error) {
 		if _, err = lock.Exec(ctx, "CREATE ROLE mezo_control_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '"+password+"'"); err != nil {
 			return nil, err
 		}
+	}
+	// PostgreSQL 16+ requires SET membership to assign database ownership. INHERIT
+	// also lets a CREATEDB/CREATEROLE provisioner revoke PUBLIC database access.
+	if _, err = lock.Exec(ctx, "GRANT mezo_control_app TO "+pgx.Identifier{adminCfg.ConnConfig.User}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
+		return nil, err
 	}
 	if err = lock.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname='mezo_control')").Scan(&exists); err != nil {
 		return nil, err
@@ -301,6 +323,14 @@ func (a *App) provision(ctx context.Context, slug, name, email, staffName, passw
 	}()
 	// Identifiers are server-generated; the password is generated hexadecimal, never user SQL.
 	if _, err = a.admin.Exec(ctx, "CREATE ROLE "+pgx.Identifier{t.DBRole}.Sanitize()+" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '"+dbPassword+"'"); err != nil {
+		return t, err
+	}
+	provisioner, parseErr := pgxpool.ParseConfig(a.cfg.AdminURL)
+	if parseErr != nil {
+		err = parseErr
+		return t, err
+	}
+	if _, err = a.admin.Exec(ctx, "GRANT "+pgx.Identifier{t.DBRole}.Sanitize()+" TO "+pgx.Identifier{provisioner.ConnConfig.User}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
 		return t, err
 	}
 	if _, err = a.admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{t.DBName}.Sanitize()+" OWNER "+pgx.Identifier{t.DBRole}.Sanitize()); err != nil {
