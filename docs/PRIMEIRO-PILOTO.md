@@ -1,6 +1,6 @@
 # Mezô · primeiro restaurante piloto
 
-Atualizado em 06/10/2026. Esta versão permite atendimento pelo QR/NFC, pedido pelo garçom, preparo na cozinha, entrega, conta da mesa e registro de pagamento presencial. A aplicação continua única, com banco e usuário PostgreSQL separados por restaurante no Supabase.
+Atualizado em 06/10/2026. Esta versão permite atendimento pelo QR/NFC, pedido confirmado pelo cliente no próprio celular (ou registrado pelo garçom), preparo na cozinha, entrega, conta da mesa e registro de pagamento presencial. A aplicação continua única, com banco e usuário PostgreSQL separados por restaurante no Supabase.
 
 ## Implantação
 
@@ -9,13 +9,13 @@ Atualizado em 06/10/2026. Esta versão permite atendimento pelo QR/NFC, pedido p
 3. Crie um acesso individual para cada garçom e cada pessoa da cozinha. Escolha a função correta. O responsável opera as duas áreas e pode cancelar pedidos com justificativa. Peça a troca da senha inicial pelo menu “Seu acesso”.
 4. Abra o link “Garçom” e o link “Cozinha” em celulares diferentes. A cozinha também funciona em tablet/computador. Mantenha a tela aberta e a conexão disponível durante o serviço; a atualização na Vercel ocorre a cada cinco segundos. Não há push com o aplicativo fechado.
 5. Baixe o QR de cada mesa pelo painel. Grave essa mesma URL na etiqueta NFC. Teste no celular antes de imprimir as placas. O QR da demonstração antiga não identifica um restaurante real.
-6. Simule uma rodada completa: chamado do cliente → atendimento → pedido com observação → preparo → pronto → entrega → conferência da conta → recebimento presencial → mesa encerrada → nova abertura sem consumo anterior.
+6. Simule uma rodada completa: cliente escolhe quantidade e observação → revisa e confirma → conta atualizada e pedido na cozinha → preparo → pronto → entrega → conferência da conta → recebimento presencial → mesa encerrada → nova abertura sem consumo anterior.
 7. Confira recebimentos pelo menu do responsável e exporte CSV. Compare os registros de Pix com o banco, cartão com a maquininha e dinheiro com o caixa. O registro do Mezô é uma confirmação da equipe; não liquida pagamentos nem emite documento fiscal.
 
 ## Regras da operação
 
 - Uma pessoa assume cada chamado/preparo. O responsável pode devolver chamados à fila ou concluir o preparo de um pedido assumido por outra pessoa.
-- A conta inclui o pedido no envio à cozinha. Cancelar antes da entrega retira o consumo e mantém a justificativa no histórico do banco. Pedidos entregues não possuem estorno nesta versão.
+- O cliente confirma o pedido sem depender do garçom: conta e cozinha recebem juntos. Chamar o garçom fica reservado à ajuda e ao pagamento. Ao assumir um chamado, o garçom abre diretamente a conta daquela mesa. Cancelar antes da entrega retira o consumo e mantém a justificativa no histórico do banco. Pedidos entregues não possuem estorno nesta versão.
 - Pedidos na fila, em preparo ou prontos bloqueiam o fechamento. O total é conferido novamente no servidor, inclusive o serviço opcional de 10%.
 - Repetir o mesmo envio não cria outro pedido. Se a conexão cair durante o envio, retome a confirmação do envio salvo na aba; confira os pedidos antes de criar outro.
 - Desativar uma pessoa revoga seu acesso. Resolva seus chamados/preparos em andamento antes de desativá-la. Não compartilhe a conta do responsável com toda a equipe.
@@ -49,7 +49,7 @@ Defina quem executa e confere o backup, a frequência e o tempo de recuperação
 - `govulncheck ./...`: nenhuma vulnerabilidade no código chamado ou nos pacotes importados. O módulo `golang.org/x/crypto` tem o aviso GO-2026-5932 referente a OpenPGP, que a aplicação não importa; o uso de bcrypt não foi apontado pela análise.
 - Integração com Supabase: autenticação, isolamento de bancos/tenants, CSRF, concorrência, persistência, pedido/cozinha/entrega e fechamento.
 - Atualização de um banco na migração anterior por duas instâncias simultâneas, usando locks do PostgreSQL.
-- Bloqueios de função nas rotas novas e antigas, revogação de acessos desativados/troca de senha, preço definido pelo servidor e rollback de pedido com item indisponível.
+- Bloqueios de função nas rotas novas e antigas, revogação de acessos desativados/troca de senha, preço definido pelo servidor, revisão obrigatória após mudança de preço, mesa vinculada à sessão do cliente e rollback de pedido com item indisponível.
 - Navegador em largura de celular: criação de pedido, observações recebidas na cozinha, preparo, pronto, entrega, conta, fechamento e expiração do acesso do cliente. Painel e relatório conferidos; JavaScript sem erros no fluxo observado.
 - Backup dos bancos locais, restauração em bancos temporários e comparação do conteúdo das tabelas. Backup do catálogo Supabase também gerado.
 

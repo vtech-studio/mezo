@@ -104,7 +104,7 @@ func (a *App) router() *echo.Echo {
 		}
 		return c.JSON(200, map[string]string{"status": "ok", "app": "Mezô"})
 	})
-	for _, name := range []string{"styles.css", "app.js", "backend.js", "favicon.svg", "admin.css", "admin.js", "htmx.min.js", "workstation.css", "workstation.js"} {
+	for _, name := range []string{"styles.css", "app.js", "backend.js", "customer.js", "favicon.svg", "mezo-logo.png", "admin.css", "admin.js", "htmx.min.js", "workstation.css", "workstation.js"} {
 		name := name
 		e.GET("/"+name, func(c echo.Context) error {
 			b, err := assets.ReadFile("dist/" + name)
@@ -118,6 +118,9 @@ func (a *App) router() *echo.Echo {
 			if name == "favicon.svg" {
 				mime = "image/svg+xml"
 			}
+			if name == "mezo-logo.png" {
+				mime = "image/png"
+			}
 			return c.Blob(200, mime, b)
 		})
 	}
@@ -130,6 +133,7 @@ func (a *App) router() *echo.Echo {
 	e.GET("/api/r/:slug/tables/:number/bill", a.tableBill)
 	e.GET("/api/r/:slug/receipts", a.receipts)
 	e.POST("/api/r/:slug/orders", a.createOrder)
+	e.POST("/api/r/:slug/customer-orders", a.createCustomerOrder)
 	e.POST("/api/r/:slug/orders/:id/:action", a.updateOrder)
 	e.POST("/api/r/:slug/password", a.changeStaffPassword, loginLimit)
 	e.GET("/api/r/:slug/bootstrap", a.bootstrap)

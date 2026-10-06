@@ -424,6 +424,78 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	if err = p.QueryRow(ctx, "SELECT price FROM menu_items WHERE id='dish'").Scan(&menuPrice); err != nil || menuPrice != 3200 {
 		t.Fatal("preço em reais não foi convertido corretamente para centavos", menuPrice, err)
 	}
+	// Customer confirmation writes the order, kitchen ticket and bill atomically.
+	customerPayload := map[string]any{"key": randomID(), "note": "Pedido confirmado pelo cliente", "expectedSubtotal": 6400, "items": []map[string]any{{"menuId": "dish", "qty": 2, "note": "Sem cebola"}}}
+	expect(request("POST", base+"/customer-orders", customerPayload, customer, customerCSRF), 410)
+	w = request("GET", "/r/"+tenant.Slug+"/m/"+token, nil, nil, "")
+	expect(w, 200)
+	newCustomer := w.Result().Cookies()[0]
+	w = request("GET", base+"/bootstrap", nil, newCustomer, "")
+	expect(w, 200)
+	newCustomerData := read(w)
+	newCustomerCSRF := newCustomerData["csrf"].(string)
+	expect(request("POST", base+"/customer-orders", customerPayload, nil, ""), 401)
+	expect(request("POST", base+"/customer-orders", customerPayload, manager.cookie, manager.csrf), 401)
+	expect(request("POST", base+"/customer-orders", customerPayload, newCustomer, ""), 403)
+	expect(request("POST", "/api/r/"+other.Slug+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF), 401)
+	customerPayload["table"] = 2
+	expect(request("POST", base+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF), 400)
+	delete(customerPayload, "table")
+	delete(customerPayload, "expectedSubtotal")
+	expect(request("POST", base+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF), 400)
+	customerPayload["expectedSubtotal"] = 6399
+	expect(request("POST", base+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF), 409)
+	w = request("GET", base+"/bootstrap", nil, newCustomer, "")
+	expect(w, 200)
+	if read(w)["totals"].(map[string]any)["total"] != float64(0) {
+		t.Fatal("preço divergente deixou consumo parcial na conta do cliente")
+	}
+	customerPayload["expectedSubtotal"] = 6400
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = request("POST", base+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF)
+		}(i)
+	}
+	wg.Wait()
+	if !((results[0].Code == 201 && results[1].Code == 200) || (results[0].Code == 200 && results[1].Code == 201)) {
+		t.Fatal("confirmação concorrente do cliente não foi idempotente", results[0].Code, results[1].Code)
+	}
+	customerOrder := read(results[0])["id"].(string)
+	if read(results[1])["id"] != customerOrder {
+		t.Fatal("cliente gerou pedidos duplicados")
+	}
+	// A persisted limit also applies across instances; retries still confirm the existing order.
+	if _, err = p.Exec(ctx, `INSERT INTO orders(id,session_id,customer_session_id,request_key,request_hash)
+ SELECT 'rate-fixture-'||n::text,$1,$1,'rate-fixture-'||n::text,'fixture' FROM generate_series(1,11) n`, newCustomerData["sessionId"]); err != nil {
+		t.Fatal(err)
+	}
+	expect(request("POST", base+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF), 200)
+	customerPayload["key"] = randomID()
+	expect(request("POST", base+"/customer-orders", customerPayload, newCustomer, newCustomerCSRF), 429)
+	if _, err = p.Exec(ctx, "DELETE FROM orders WHERE id LIKE 'rate-fixture-%' AND session_id=$1", newCustomerData["sessionId"]); err != nil {
+		t.Fatal(err)
+	}
+	var customerAudit int
+	if err = p.QueryRow(ctx, "SELECT count(*) FROM order_events WHERE order_id=$1 AND staff_id IS NULL AND customer_session_id=$2", customerOrder, newCustomerData["sessionId"]).Scan(&customerAudit); err != nil || customerAudit != 1 {
+		t.Fatal("pedido não preservou a autoria do cliente", customerAudit, err)
+	}
+	w = request("GET", base+"/bootstrap", nil, newCustomer, "")
+	expect(w, 200)
+	if read(w)["totals"].(map[string]any)["total"] != float64(7040) {
+		t.Fatal("pedido do cliente não entrou imediatamente na conta")
+	}
+	w = request("GET", base+"/operations?view=kitchen", nil, chefs[0].cookie, "")
+	expect(w, 200)
+	if !strings.Contains(w.Body.String(), customerOrder) || !strings.Contains(w.Body.String(), `"source":"customer"`) {
+		t.Fatal("cozinha não recebeu o pedido confirmado pelo cliente")
+	}
+	expect(request("POST", base+"/orders/"+customerOrder+"/start", map[string]any{}, chefs[0].cookie, chefs[0].csrf), 200)
+	expect(request("POST", base+"/orders/"+customerOrder+"/ready", map[string]any{}, chefs[0].cookie, chefs[0].csrf), 200)
+	expect(request("POST", base+"/orders/"+customerOrder+"/deliver", map[string]any{}, manager.cookie, manager.csrf), 200)
+	expect(request("POST", base+"/tables/1/close", map[string]any{"confirmed": true, "expectedTotal": 7040, "method": "cash"}, manager.cookie, manager.csrf), 200)
+	expect(request("GET", base+"/bootstrap", nil, newCustomer, ""), 410)
 	// Password rotation revokes other sessions; wrong current passwords never change credentials.
 	expect(request("POST", base+"/password", map[string]string{"current": "wrong", "password": randomID()}, chefs[0].cookie, chefs[0].csrf), 403)
 	newPassword := randomID()

@@ -106,6 +106,7 @@ func (a *App) bootstrap(c echo.Context) error {
 		}
 		out["table"] = map[string]any{"number": n, "seats": seats}
 		out["service"] = service
+		out["sessionId"] = x.Session.Subject
 		rows, err = x.Pool.Query(ctx, "SELECT id,menu_id,name,price,qty FROM consumption WHERE session_id=$1 AND NOT cancelled ORDER BY created_at", x.Session.Subject)
 		if err != nil {
 			return err

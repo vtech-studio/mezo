@@ -1,16 +1,20 @@
 'use strict';
 // The static publication remains an explicitly identified demo. Go inserts the runtime marker.
 async function api(path,body){
-  const res=await fetch(`/api/r/${encodeURIComponent(tenantSlug)}${path}`,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin'});
-  const data=await res.json();if(!res.ok){const error=new Error(data.error||'Não foi possível concluir.');error.status=res.status;throw error;}return data;
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),15000);
+  try{
+    const res=await fetch(`/api/r/${encodeURIComponent(tenantSlug)}${path}`,{method:body===undefined?'GET':'POST',headers:body===undefined?{}:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:body===undefined?undefined:JSON.stringify(body),credentials:'same-origin',signal:controller.signal});
+    let data;try{data=await res.json();}catch{throw new Error('Resposta indisponível. Confira a conexão e tente novamente.');}
+    if(!res.ok){const error=new Error(data.error||'Não foi possível concluir.');error.status=res.status;throw error;}return data;
+  }catch(e){if(e.name==='AbortError'||e instanceof TypeError)throw new Error('Não foi possível confirmar o envio. Confira a conexão e confirme novamente; o pedido será lançado uma única vez.');throw e;}finally{clearTimeout(timeout);}
 }
 async function refreshLive(){
   const data=await api('/bootstrap');
   csrf=data.csrf;restaurantName=data.restaurant.name;menu=data.menu;state={calls:data.calls,service:data.service??true};
-  liveOrders=data.orders||[];
+  liveOrders=data.orders||[];liveSessionId=data.sessionId||'';
   liveTransport=data.realtime||'events';
   if(data.table){tableNumber=data.table.number;tableSeats=data.table.seats;receiptItems=data.items;liveTotals=data.totals;}
-  document.querySelector('.restaurant>span:last-child').innerHTML=`${escapeHTML(restaurantName)}<small>À SUA MESA COM MEZÔ</small>`;
+  document.querySelector('.restaurant>span:last-child').innerHTML=`${escapeHTML(restaurantName)}<small>À SUA MESA</small>`;
   document.querySelector('.restaurant').setAttribute('aria-label',`${restaurantName}, início`);
   document.title=`Mezô · ${restaurantName}`;
 }

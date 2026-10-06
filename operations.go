@@ -26,6 +26,7 @@ type Order struct {
 	SessionID  string      `json:"sessionId"`
 	Table      int         `json:"table"`
 	Status     string      `json:"status"`
+	Source     string      `json:"source"`
 	Note       string      `json:"note"`
 	Assigned   string      `json:"assigned"`
 	AssignedID string      `json:"assignedId"`
@@ -52,7 +53,7 @@ func lockOperator(ctx context.Context, tx pgx.Tx, id, expectedRole string) error
 func readOrders(ctx context.Context, p *pgxpool.Pool, session string, kitchen bool) ([]Order, error) {
 	// Every active ticket remains visible, even with a long order history.
 	rows, err := p.Query(ctx, `WITH visible AS (SELECT * FROM orders WHERE status IN ('queued','preparing','ready') UNION ALL (SELECT * FROM orders WHERE status IN ('delivered','cancelled') ORDER BY updated_at DESC LIMIT 100))
- SELECT o.id,o.session_id,s.table_number,o.status,o.note,COALESCE(u.name,''),COALESCE(o.assigned_to,''),
+ SELECT o.id,o.session_id,s.table_number,o.status,CASE WHEN o.customer_session_id IS NULL THEN 'waiter' ELSE 'customer' END,o.note,COALESCE(u.name,''),COALESCE(o.assigned_to,''),
  (extract(epoch FROM o.created_at)*1000)::bigint,(extract(epoch FROM o.updated_at)*1000)::bigint,
  (SELECT jsonb_agg(jsonb_build_object('id',i.id,'name',i.name,'qty',i.qty,'price',i.price,'note',i.note) ORDER BY i.id) FROM order_items i WHERE i.order_id=o.id)
  FROM visible o JOIN table_sessions s ON s.id=o.session_id LEFT JOIN staff u ON u.id=o.assigned_to
@@ -65,7 +66,7 @@ func readOrders(ctx context.Context, p *pgxpool.Pool, session string, kitchen bo
 	for rows.Next() {
 		var v Order
 		var raw []byte
-		if err = rows.Scan(&v.ID, &v.SessionID, &v.Table, &v.Status, &v.Note, &v.Assigned, &v.AssignedID, &v.Created, &v.Updated, &raw); err != nil {
+		if err = rows.Scan(&v.ID, &v.SessionID, &v.Table, &v.Status, &v.Source, &v.Note, &v.Assigned, &v.AssignedID, &v.Created, &v.Updated, &raw); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(raw, &v.Items); err != nil {
@@ -119,7 +120,19 @@ func (a *App) operations(c echo.Context) error {
 }
 
 func (a *App) createOrder(c echo.Context) error {
-	x, err := a.staffAccess(c, true, "manager", "waiter")
+	return a.submitOrder(c, false)
+}
+func (a *App) createCustomerOrder(c echo.Context) error {
+	return a.submitOrder(c, true)
+}
+func (a *App) submitOrder(c echo.Context, customer bool) error {
+	var x Access
+	var err error
+	if customer {
+		x, err = a.access(c, "customer", true)
+	} else {
+		x, err = a.staffAccess(c, true, "manager", "waiter")
+	}
 	if err != nil {
 		return err
 	}
@@ -133,11 +146,12 @@ func (a *App) createOrder(c echo.Context) error {
 			Qty    int    `json:"qty"`
 			Note   string `json:"note"`
 		} `json:"items"`
+		ExpectedSubtotal *int64 `json:"expectedSubtotal,omitempty"`
 	}
 	if err = decode(c, &in); err != nil {
 		return err
 	}
-	if in.Table < 1 || in.Table > 500 || len(in.Key) < 16 || len(in.Key) > 80 || utf8.RuneCountInString(in.Note) > 300 || len(in.Items) < 1 || len(in.Items) > 40 {
+	if (!customer && (in.Table < 1 || in.Table > 500)) || (customer && (in.Table != 0 || in.ExpectedSubtotal == nil || *in.ExpectedSubtotal < 0)) || len(in.Key) < 16 || len(in.Key) > 80 || utf8.RuneCountInString(in.Note) > 300 || len(in.Items) < 1 || len(in.Items) > 40 {
 		return echo.NewHTTPError(400, "Confira a mesa, os itens e a observação do pedido")
 	}
 	for _, v := range in.Items {
@@ -153,15 +167,23 @@ func (a *App) createOrder(c echo.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err = lockOperator(ctx, tx, x.Session.Subject, x.Role); err != nil {
-		return err
+	if !customer {
+		if err = lockOperator(ctx, tx, x.Session.Subject, x.Role); err != nil {
+			return err
+		}
 	}
 	// Serializes retries of the same basket, including concurrent requests for different tables.
-	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", x.Session.Subject+":"+in.Key); err != nil {
+	actorKey := x.Session.Subject + ":" + in.Key
+	actorColumn := "created_by"
+	if customer {
+		actorKey = "customer:" + actorKey
+		actorColumn = "customer_session_id"
+	}
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,0))", actorKey); err != nil {
 		return err
 	}
 	var id, previous string
-	err = tx.QueryRow(ctx, "SELECT id,request_hash FROM orders WHERE created_by=$1 AND request_key=$2", x.Session.Subject, in.Key).Scan(&id, &previous)
+	err = tx.QueryRow(ctx, "SELECT id,request_hash FROM orders WHERE "+actorColumn+"=$1 AND request_key=$2", x.Session.Subject, in.Key).Scan(&id, &previous)
 	if err == nil {
 		if previous != digest {
 			return echo.NewHTTPError(409, "Este envio já foi usado para outro pedido")
@@ -172,17 +194,35 @@ func (a *App) createOrder(c echo.Context) error {
 		return err
 	}
 	var session string
-	err = tx.QueryRow(ctx, "SELECT id FROM table_sessions WHERE table_number=$1 AND closed_at IS NULL FOR UPDATE", in.Table).Scan(&session)
+	if customer {
+		err = tx.QueryRow(ctx, "SELECT id FROM table_sessions WHERE id=$1 AND closed_at IS NULL FOR UPDATE", x.Session.Subject).Scan(&session)
+	} else {
+		err = tx.QueryRow(ctx, "SELECT id FROM table_sessions WHERE table_number=$1 AND closed_at IS NULL FOR UPDATE", in.Table).Scan(&session)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return echo.NewHTTPError(409, "Abra a mesa antes de enviar o pedido")
 	}
 	if err != nil {
 		return err
 	}
+	var staffID, customerSession any
+	if customer {
+		customerSession = session
+		var recent int
+		if err = tx.QueryRow(ctx, "SELECT count(*) FROM orders WHERE customer_session_id=$1 AND created_at>now()-interval '1 minute'", session).Scan(&recent); err != nil {
+			return err
+		}
+		if recent >= 12 {
+			return echo.NewHTTPError(429, "Muitos pedidos nesta mesa. Aguarde um minuto antes de confirmar outro.")
+		}
+	} else {
+		staffID = x.Session.Subject
+	}
 	id = randomID()
-	if _, err = tx.Exec(ctx, "INSERT INTO orders(id,session_id,created_by,request_key,request_hash,note) VALUES($1,$2,$3,$4,$5,$6)", id, session, x.Session.Subject, in.Key, digest, in.Note); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO orders(id,session_id,created_by,request_key,request_hash,note,customer_session_id) VALUES($1,$2,$3,$4,$5,$6,$7)", id, session, staffID, in.Key, digest, in.Note, customerSession); err != nil {
 		return err
 	}
+	var subtotal int64
 	for _, v := range in.Items {
 		var name string
 		var price int
@@ -193,14 +233,18 @@ func (a *App) createOrder(c echo.Context) error {
 		if err != nil {
 			return err
 		}
+		subtotal += int64(price) * int64(v.Qty)
 		if _, err = tx.Exec(ctx, "INSERT INTO order_items(id,order_id,menu_id,name,price,qty,note) VALUES($1,$2,$3,$4,$5,$6,$7)", randomID(), id, v.MenuID, name, price, v.Qty, v.Note); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, "INSERT INTO consumption(id,session_id,menu_id,name,price,qty,created_by,order_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", randomID(), session, v.MenuID, name, price, v.Qty, x.Session.Subject, id); err != nil {
+		if _, err = tx.Exec(ctx, "INSERT INTO consumption(id,session_id,menu_id,name,price,qty,created_by,order_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", randomID(), session, v.MenuID, name, price, v.Qty, staffID, id); err != nil {
 			return err
 		}
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO order_events(order_id,action,staff_id) VALUES($1,'created',$2)", id, x.Session.Subject); err != nil {
+	if customer && subtotal != *in.ExpectedSubtotal {
+		return echo.NewHTTPError(409, "O preço mudou. Confira o pedido atualizado antes de confirmar.")
+	}
+	if _, err = tx.Exec(ctx, "INSERT INTO order_events(order_id,action,staff_id,customer_session_id) VALUES($1,'created',$2,$3)", id, staffID, customerSession); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {

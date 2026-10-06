@@ -9,14 +9,15 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
   <script src="/backend.js" defer></script>
+  <script src="/customer.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <header class="app-header">
       <a class="restaurant" href="#mesa" aria-label="Casa do Sol, início">
-        <span class="restaurant-mark" aria-hidden="true"><svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="9"/><path d="M24 3v7m0 28v7M3 24h7m28 0h7M9.2 9.2l5 5m19.6 19.6 5 5M9.2 38.8l5-5m19.6-19.6 5-5M16 4.6l2.7 6.4m10.6 26 2.7 6.4M4.6 32l6.4-2.7m26-10.6 6.4-2.7M4.6 16l6.4 2.7m26 10.6 6.4 2.7M16 43.4l2.7-6.4m10.6-26L32 4.6"/></svg></span>
-        <span>Casa do Sol<small>À SUA MESA COM MEZÔ</small></span>
+        <img class="mezo-logo" src="/mezo-logo.png" alt="Mezô" width="120" height="40">
+        <span>Casa do Sol<small>À SUA MESA</small></span>
       </a>
       <button class="icon-button" id="more-button" aria-label="Informações e opções"><span data-icon="more"></span></button>
     </header>

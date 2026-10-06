@@ -36,7 +36,7 @@ const timeLabel = date => {
 const tableName = n => String(n).padStart(2,'0');
 const reasons = [
   {id:'help',label:'Preciso de ajuda',icon:'help'},
-  {id:'order',label:'Fazer um pedido',icon:'utensils'},
+  {id:'order',label:'Ajuda para pedir',icon:'utensils'},
   {id:'water',label:'Pedir água',icon:'water'},
   {id:'bill',label:'Pedir a conta',icon:'receipt'},
 ];
@@ -50,7 +50,11 @@ let menu = [
   {id:'agua',name:'Água mineral',description:'Com ou sem gás. Servida bem gelada.',price:700,category:'Bebidas',art:'water',tags:['500 ml','Sem álcool']},
   {id:'brownie',name:'Brownie quentinho',description:'Chocolate intenso, sorvete de baunilha e calda feita aqui.',price:2400,category:'Sobremesas',art:'brownie',tags:['Contém leite, ovos e glúten']},
 ];
-let receiptItems = [{id:'burrata',qty:1},{id:'risoto',qty:1},{id:'agua',qty:2},{id:'limonada',qty:1}];
+const demoReceiptSeed=()=>[{id:'burrata',qty:1},{id:'risoto',qty:1},{id:'agua',qty:2},{id:'limonada',qty:1}];
+let receiptItems=demoReceiptSeed();
+const demoReceiptKey='mezo-demo-receipt-v1';
+function saveDemoReceipt(){try{localStorage.setItem(demoReceiptKey,JSON.stringify(receiptItems));}catch{}}
+function restoreDemoReceipt(){try{const saved=JSON.parse(localStorage.getItem(demoReceiptKey));if(Array.isArray(saved)&&saved.length<=1000&&saved.every(i=>menu.some(m=>m.id===i.id)&&Number.isInteger(i.qty)&&i.qty>0&&i.qty<=100&&(i.name===undefined||typeof i.name==='string')&&(i.price===undefined||Number.isSafeInteger(i.price)&&i.price>=0)))receiptItems=saved;}catch{}}
 const subtotal = () => serverMode ? liveTotals.subtotal : receiptItems.reduce((total,item) => total + (item.price ?? menu.find(d => d.id===item.id)?.price ?? 0) * item.qty,0);
 const serviceValue = () => serverMode ? liveTotals.service : state.service ? Math.round(subtotal() * .1) : 0;
 const totalValue = () => serverMode ? liveTotals.total : subtotal() + serviceValue();
@@ -74,8 +78,9 @@ function loadState(){
 const serverMode=!!document.querySelector('meta[name="mezo-runtime"]');
 document.querySelector('.preview-note').hidden=serverMode;
 const tenantSlug=serverMode ? location.pathname.split('/')[2] : '';
+if(!serverMode)restoreDemoReceipt();
 let tableNumber=8, tableSeats=2, staffName='Ana', staffID='', restaurantName='Casa do Sol';
-let tableData=[], liveOrders=[], csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
+let tableData=[], liveOrders=[], liveSessionId='', csrf='', liveTotals={subtotal:0,service:0,total:0}, eventStream=null, liveReady=false;
 let liveTransport='events', livePollTimer=null;
 let state=serverMode ? {service:true,calls:[]} : loadState();
 let role='customer';
@@ -119,7 +124,7 @@ function activityCard(call){
 }
 function renderHome(){
   const active=state.calls.filter(c=>c.table===tableNumber&&['pending','progress'].includes(c.status));
-  main.innerHTML=`<div class="table-line"><span class="table-id">${icon('table')} Mesa ${tableName(tableNumber)}</span><span class="badge">Aberta · ${tableSeats} pessoas</span></div><section class="welcome"><div><p class="eyebrow">BOA COMIDA. BOA COMPANHIA.</p><h1>Aproveite.<br>A gente cuida<br><em>do resto.</em></h1></div>${welcomeArt}</section><button class="call-action" data-action="call"><span class="call-icon">${icon('bell')}</span><span><strong>Chamar garçom</strong><small>Precisou, é só tocar.</small></span>${icon('arrow')}</button><div class="shortcut-grid"><a href="#cardapio" class="shortcut">${icon('book')}${icon('arrowUp','small-arrow')}<strong>Nosso cardápio</strong><small>Escolha com calma.</small></a><a href="#conta" class="shortcut">${icon('receipt')}${icon('arrowUp','small-arrow')}<strong>Minha conta</strong><small>${money(totalValue())} até agora</small></a></div><section><div class="section-heading"><h2>Seu atendimento</h2>${active.length?`<span class="badge neutral">${active.length} ${active.length===1?'chamado':'chamados'}</span>`:'<span class="eyebrow" style="font-size:8px">ESTAMOS POR AQUI</span>'}</div>${active.length?`<div class="call-list">${active.map(activityCard).join('')}</div>`:`<div class="empty-note">${icon('circleCheck')}<p><strong>Tudo certo por aqui.</strong>Quando precisar, nossa equipe está a um toque.</p></div>`}</section><footer class="hospitality-note">${icon('heart')} Feito para você se sentir em casa.<span class="powered">mezô</span></footer>`;
+  main.innerHTML=`<div class="table-line"><span class="table-id">${icon('table')} Mesa ${tableName(tableNumber)}</span><span class="badge">Aberta · ${tableSeats} pessoas</span></div><section class="welcome"><div><p class="eyebrow">BOA COMIDA. BOA COMPANHIA.</p><h1>Aproveite.<br>A gente cuida<br><em>do resto.</em></h1></div>${welcomeArt}</section><a class="call-action" href="#cardapio"><span class="call-icon">${icon('book')}</span><span><strong>Fazer pedido</strong><small>Escolha e confirme pelo celular.</small></span>${icon('arrow')}</a><div class="shortcut-grid"><button data-action="call" class="shortcut">${icon('bell')}${icon('arrowUp','small-arrow')}<strong>Chamar garçom</strong><small>Precisa de ajuda?</small></button><a href="#conta" class="shortcut">${icon('receipt')}${icon('arrowUp','small-arrow')}<strong>Minha conta</strong><small>${money(totalValue())} até agora</small></a></div><section><div class="section-heading"><h2>Seu atendimento</h2>${active.length?`<span class="badge neutral">${active.length} ${active.length===1?'chamado':'chamados'}</span>`:'<span class="eyebrow" style="font-size:14px">ESTAMOS POR AQUI</span>'}</div>${active.length?`<div class="call-list">${active.map(activityCard).join('')}</div>`:`<div class="empty-note">${icon('circleCheck')}<p><strong>Tudo certo por aqui.</strong>Quando precisar, nossa equipe está a um toque.</p></div>`}</section><footer class="hospitality-note">${icon('heart')} Feito para você se sentir em casa.<span class="powered">mezô</span></footer>`;
   if(serverMode&&liveOrders.length){
     const labels={queued:'Recebido pela cozinha',preparing:'Em preparo',ready:'Pronto para servir',delivered:'Entregue',cancelled:'Cancelado'};
     const section=document.createElement('section');
@@ -134,17 +139,23 @@ function menuList(){
   list.innerHTML=dishes.length?dishes.map(d=>`<button class="menu-item" data-action="dish" data-id="${escapeHTML(d.id)}" aria-label="Ver ${escapeHTML(d.name)}, ${money(d.price)}"><span class="dish-art">${dishArt(d.art)}</span><span class="dish-info">${d.tag?`<span class="dish-tag">${escapeHTML(d.tag)}</span>`:''}<h3>${escapeHTML(d.name)}</h3><p>${escapeHTML(d.description)}</p><strong>${money(d.price)}</strong></span></button>`).join(''):`<div class="empty-state">${icon('search')}<h3>Nenhum prato por aqui</h3><p>Tente outro nome ou uma categoria diferente.</p><button class="secondary-button" data-action="clear-search">Limpar busca e filtros</button></div>`;
 }
 function renderMenu(){
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">FRESCO. SIMPLES. DA CASA.</p><h1>O que vai ser hoje?</h1><p>Um pouco de carinho em cada prato.</p></div><label class="search-box">${icon('search')}<input id="menu-search" type="search" placeholder="Encontre seu próximo favorito" aria-label="Buscar no cardápio" value="${escapeHTML(query)}"></label><div class="chips" aria-label="Categorias">${['Todos','Entradas','Principais','Bebidas','Sobremesas'].map(c=>`<button class="chip ${category===c?'active':''}" data-category="${c}" aria-pressed="${category===c}">${c}</button>`).join('')}</div><div class="menu-list" id="menu-list"></div><p class="menu-footer">${icon('leaf')} Tem alguma restrição alimentar? Fale com a gente.</p>`;
+  main.innerHTML=`<div class="page-heading"><p class="eyebrow">FRESCO. SIMPLES. DA CASA.</p><h1>O que vai ser hoje?</h1><p>Escolha os itens e confirme para enviar à cozinha.</p></div><label class="search-box">${icon('search')}<input id="menu-search" type="search" placeholder="Encontre seu próximo favorito" aria-label="Buscar no cardápio" value="${escapeHTML(query)}"></label><div class="chips" aria-label="Categorias">${['Todos','Entradas','Principais','Bebidas','Sobremesas'].map(c=>`<button class="chip ${category===c?'active':''}" data-category="${c}" aria-pressed="${category===c}">${c}</button>`).join('')}</div><div class="menu-list" id="menu-list"></div><p class="menu-footer">${icon('leaf')} Tem alguma restrição alimentar? Fale com a gente.</p>`;
   menuList();
+
 }
 function renderBill(){
-  main.innerHTML=`<div class="page-heading"><p class="eyebrow">MESA ${tableName(tableNumber)} · ${tableSeats} PESSOAS</p><h1>Foi bom ter você.</h1><p>Sua conta, com tudo bem explicadinho.</p></div><section class="receipt" aria-label="Consumo da mesa"><div class="receipt-head"><strong>O que veio à mesa</strong><small>${receiptItems.reduce((n,i)=>n+i.qty,0)} itens</small></div><div class="receipt-lines">${receiptItems.map(item=>{const d=item.name?item:menu.find(d=>d.id===item.id);return `<div class="receipt-item"><span class="receipt-qty">${item.qty}×</span><div><strong>${escapeHTML(d.name)}</strong><small>${item.qty>1?`${money(d.price)} cada`:'Preparado pela casa'}</small></div><span class="item-price">${money(d.price*item.qty)}</span></div>`;}).join('')}</div><div class="receipt-totals"><div class="total-line"><span>Subtotal</span><span>${money(subtotal())}</span></div><div class="total-line"><label><input type="checkbox" id="service-toggle" ${state.service?'checked':''}> Serviço de 10% <span style="font-size:9px">(opcional)</span></label><span id="service-value">${money(serviceValue())}</span></div><div class="total-line grand"><span>Total da mesa</span><strong id="bill-total">${money(totalValue())}</strong></div></div></section><div class="section-heading"><h2>Como prefere encerrar?</h2></div><button class="primary-button" data-action="payment">Escolher pagamento ${icon('arrow')}</button><p class="payment-caption">${icon('info')} ${serverMode?'Pagamento online em configuração · solicite à equipe':'Pagamento demonstrativo · nenhuma cobrança real'}</p><button class="secondary-button" data-action="ask-bill">${icon('bell')} Prefiro pagar com o garçom</button><footer class="hospitality-note">${icon('heart')} Sua presença fez nosso dia.<span class="powered">mezô</span></footer>`;
+  main.innerHTML=`<div class="page-heading"><p class="eyebrow">MESA ${tableName(tableNumber)} · ${tableSeats} PESSOAS</p><h1>Sua conta.</h1><p>Seus pedidos confirmados já aparecem aqui.</p></div><section class="receipt" aria-label="Consumo da mesa"><div class="receipt-head"><strong>O que veio à mesa</strong><small>${receiptItems.reduce((n,i)=>n+i.qty,0)} itens</small></div><div class="receipt-lines">${receiptItems.map(item=>{const d=item.name?item:menu.find(d=>d.id===item.id);return `<div class="receipt-item"><span class="receipt-qty">${item.qty}×</span><div><strong>${escapeHTML(d.name)}</strong><small>${item.qty>1?`${money(d.price)} cada`:'1 unidade'}</small></div><span class="item-price">${money(d.price*item.qty)}</span></div>`;}).join('')}</div><div class="receipt-totals"><div class="total-line"><span>Subtotal</span><span>${money(subtotal())}</span></div><div class="total-line"><label><input type="checkbox" id="service-toggle" ${state.service?'checked':''}> Serviço de 10% <span style="font-size:14px">(opcional)</span></label><span id="service-value">${money(serviceValue())}</span></div><div class="total-line grand"><span>Total da mesa</span><strong id="bill-total">${money(totalValue())}</strong></div></div></section>${customerOrderStatus()}<a class="secondary-button" href="#cardapio">Fazer outro pedido ${icon('book')}</a><div class="section-heading"><h2>Pronto para encerrar?</h2></div><button class="primary-button" data-action="ask-bill">Chamar garçom para pagar ${icon('bell')}</button><p class="payment-caption">${icon('info')} ${serverMode?'O pagamento é feito presencialmente com a equipe.':'Demonstração · nenhuma cobrança real'}</p><footer class="hospitality-note">${icon('heart')} Sua presença fez nosso dia.<span class="powered">mezô</span></footer>`;
+}
+function customerOrderStatus(){
+  if(!serverMode||!liveOrders.length)return '';
+  const labels={queued:'Na fila da cozinha',preparing:'Em preparo',ready:'Pronto para servir',delivered:'Entregue',cancelled:'Cancelado'};
+  return `<section class="customer-order-status"><h2>Seus pedidos</h2>${liveOrders.slice(-10).reverse().map(o=>`<div class="order-status-row"><div><strong>${o.items.map(i=>`${i.qty}× ${escapeHTML(i.name)}`).join(', ')}</strong><small>${labels[o.status]}</small></div>${icon(o.status==='delivered'?'check':'clock')}</div>`).join('')}</section>`;
 }
 function render(){
   if(serverMode&&!liveReady)return;
   renderNav();
   const views={mesa:renderHome,cardapio:renderMenu,conta:renderBill};
-  (views[route]||renderHome)();
+  (views[route]||renderHome)();renderCartBar();
 }
 async function navigate(next,focus=false){
   route=['mesa','cardapio','conta'].includes(next)?next:'mesa';
@@ -154,7 +165,7 @@ async function navigate(next,focus=false){
     main.innerHTML='<div class="empty-state"><h3>Preparando seu lugar…</h3><p>Conectando ao restaurante.</p></div>';
     try{await refreshLive();liveReady=true;connectLive();}catch(e){if(eventStream)eventStream.close();clearInterval(livePollTimer);renderAccess(e);return;}
   }
-  render();
+  restoreCustomerCart();render();
   window.scrollTo({top:0,behavior:'instant'});
   if(focus)main.focus({preventScroll:true});
 }
@@ -171,7 +182,7 @@ function openSheet(title,body){
 function closeSheet(){sheet.close();}
 function openCall(reason='help',note=''){
   selectedReason=reason;
-  openSheet('Como podemos ajudar?',`<p class="sheet-description">Conte o que precisa. Nossa equipe recebe seu chamado com o número da mesa.</p><div class="reason-list" role="group" aria-label="Motivo do chamado">${reasons.map(r=>`<button class="reason-button ${r.id===reason?'selected':''}" data-reason="${r.id}" aria-pressed="${r.id===reason}">${icon(r.icon)}${r.label}</button>`).join('')}</div><label class="field-label" for="call-note"><span>Quer acrescentar algo? <span style="font-size:9px">(opcional)</span></span><span id="note-count">${note.length}/140</span></label><textarea id="call-note" maxlength="140" placeholder="Ex.: uma água sem gás, por favor.">${escapeHTML(note)}</textarea><button class="primary-button" data-action="send-call">${icon('bell')} Enviar chamado</button><p class="sheet-note">Mesa ${tableName(tableNumber)} · seu lugar já está identificado</p>`);
+  openSheet(reason==='bill'?'Chamar para pagar':'Como podemos ajudar?',`${reason==='bill'?`<p class="sheet-description">A equipe virá até a mesa ${tableName(tableNumber)} para conferir a conta e receber o pagamento presencial.<br>Total atual: <strong>${money(totalValue())}</strong></p>`:'<p class="sheet-description">Conte o que precisa. Nossa equipe recebe seu chamado com o número da mesa.</p>'}${reason==='bill'?'':`<div class="reason-list" role="group" aria-label="Motivo do chamado">${reasons.map(r=>`<button class="reason-button ${r.id===reason?'selected':''}" data-reason="${r.id}" aria-pressed="${r.id===reason}">${icon(r.icon)}${r.label}</button>`).join('')}</div>`}<label class="field-label" for="call-note"><span>Quer acrescentar algo? <span style="font-size:14px">(opcional)</span></span><span id="note-count">${note.length}/140</span></label><textarea id="call-note" maxlength="140" placeholder="Ex.: uma água sem gás, por favor.">${escapeHTML(note)}</textarea><button class="primary-button" data-action="send-call">${icon('bell')} Enviar chamado</button><p class="sheet-note">Mesa ${tableName(tableNumber)} · seu lugar já está identificado</p>`);
 }
 async function sendCall(){
   if(serverMode){await sendLiveCall();return;}
@@ -187,7 +198,7 @@ async function sendCall(){
 }
 function openDish(id){
   const dish=menu.find(d=>d.id===id);if(!dish)return;
-  openSheet(dish.name,`<div class="detail-art">${dishArt(dish.art)}</div><div class="dish-detail-heading"><span class="eyebrow">${escapeHTML(dish.category)}</span><strong>${money(dish.price)}</strong></div><p class="detail-description">${escapeHTML(dish.description)}</p><div>${dish.tags.map(t=>`<span class="ingredient-tag">${escapeHTML(t)}</span>`).join('')}</div><button class="primary-button" data-action="ask-dish" data-id="${escapeHTML(dish.id)}">${icon('bell')} Pedir com o garçom</button><p class="sheet-note">O garçom confirma seu pedido à mesa.</p>`);
+  openCustomerDish(dish);
 }
 function openPayment(){
   if(serverMode){openSheet('Como encerrar sua conta?',`<p class="sheet-description">Pix e cartão online serão disponibilizados após a configuração do provedor de pagamentos.</p><button class="primary-button" data-action="ask-bill">${icon('bell')} Solicitar pagamento com a equipe</button><p class="sheet-note">Total atual: ${money(totalValue())}</p>`);return;}
@@ -218,9 +229,9 @@ document.addEventListener('click',async event=>{
   else if(action==='simulate-payment')simulatePayment();
   else if(action==='ask-bill')openCall('bill');
   else if(action==='clear-search'){query='';category='Todos';renderMenu();}
-  else if(action==='about')openSheet('Uma mesa para experimentar.',`<p class="sheet-description">Esta interface usa o restaurante fictício Casa do Sol. Os pratos, valores, mesas e atendimentos são exemplos.</p><div class="demo-info">${icon('info')}<span>Chamados são simulados neste navegador. Nenhuma equipe real recebe notificações e nenhum pagamento é processado.</span></div><p class="sheet-description">Explore o cardápio, os chamados e a conta da mesa.</p><button class="primary-button" data-action="close-sheet">Vamos experimentar</button>`);
+  else if(action==='about')openSheet('Uma mesa para experimentar.',`<p class="sheet-description">Esta interface usa o restaurante fictício Casa do Sol. Os pratos, valores, mesas e atendimentos são exemplos.</p><div class="demo-info">${icon('info')}<span>Pedidos e chamados são simulados neste navegador. Nenhuma equipe real recebe notificações e nenhum pagamento é processado.</span></div><p class="sheet-description">Explore o cardápio, os chamados e a conta da mesa.</p><button class="primary-button" data-action="close-sheet">Vamos experimentar</button>`);
   else if(action==='reset-confirm')openSheet('Começar de novo?',`<p class="sheet-description">Os chamados criados nesta demonstração serão apagados e os exemplos iniciais voltarão.</p><div class="button-row"><button class="secondary-button" data-action="close-sheet">Manter como está</button><button class="primary-button" data-action="reset">Reiniciar</button></div>`);
-  else if(action==='reset'){state=seedState();saveState();query='';category='Todos';filter='all';closeSheet();if(location.hash==='#mesa')navigate('mesa',true);else location.hash='mesa';toast('Demonstração reiniciada.');}
+  else if(action==='reset'){receiptItems=demoReceiptSeed();saveDemoReceipt();customerBasket=[];customerPending=null;customerOrderNote='';saveCustomerCart();state=seedState();saveState();query='';category='Todos';filter='all';closeSheet();if(location.hash==='#mesa')navigate('mesa',true);else location.hash='mesa';toast('Demonstração reiniciada.');}
 });
 document.addEventListener('input',event=>{
   if(event.target.id==='menu-search'){query=event.target.value;menuList();}
