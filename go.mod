@@ -8,6 +8,7 @@ require (
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	golang.org/x/image v0.46.0
 	golang.org/x/crypto v0.57.0
 )
 

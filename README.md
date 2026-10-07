@@ -135,3 +135,11 @@ A conta Vercel atual está no plano Hobby. Antes de uso comercial, o responsáve
 A publicação privada em Sites permanece uma **demonstração estática**, agora com a marca Mezô. Esse ambiente serve `dist`, não executa o monólito Go nem conecta a este PostgreSQL. A demonstração usa armazenamento local e identifica ações simuladas; o Go insere o marcador de execução real e usa exclusivamente a API.
 
 HTMX 2.0.8 está incluído em `dist/htmx.min.js`; sua licença está em `dist/htmx.LICENSE`.
+
+### Logo e fotos com Cloudinary
+
+Configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET somente no servidor (Vercel: Production, tipo Secret). No painel da plataforma, cada restaurante possui envio de logo e cada item possui envio de foto. O responsável também acessa /r/IDENTIFICADOR/imagens pelo menu da sua conta no salão ou na cozinha; garçons e cozinheiros não podem alterar imagens.
+
+JPG, PNG e WebP de até 3 MB e 24 megapixels. O servidor valida o arquivo completo, autentica a conta, verifica CSRF e faz upload assinado pela API do Cloudinary. Imagens são organizadas por ID de tenant; suas URLs públicas e IDs são armazenados somente no PostgreSQL do restaurante. Entrega limitada a 1600 px; nenhuma chave é enviada ao navegador. A logo do restaurante aparece no cabeçalho do cliente, e as fotos aparecem no cardápio e nos detalhes do prato.
+
+Substituições criam novos arquivos e preservam os anteriores no Cloudinary. O backup PostgreSQL contém URLs e IDs; não contém os arquivos de imagem. A retenção e o backup dos arquivos são administrados separadamente no Cloudinary. MEZO_CLOUDINARY_TEST=1 habilita o teste real, que usa restaurantes e imagens próprios e remove esses dados ao terminar.

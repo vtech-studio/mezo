@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"os"
@@ -73,7 +74,7 @@ func (a *App) router() *echo.Echo {
 			return echo.NewHTTPError(429, "Muitas tentativas. Aguarde alguns segundos e tente novamente.")
 		},
 	})
-	e.Use(middleware.Recover(), middleware.BodyLimit("32K"))
+	e.Use(middleware.Recover(), middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{Limit: "32K", Skipper: func(c echo.Context) bool { return imageRoute(c.Path()) }}), middleware.BodyLimitWithConfig(middleware.BodyLimitConfig{Limit: "4M", Skipper: func(c echo.Context) bool { return !imageRoute(c.Path()) }}))
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			c.Response().Header().Set("X-Content-Type-Options", "nosniff")
@@ -84,7 +85,7 @@ func (a *App) router() *echo.Echo {
 			if a.cfg.Secure {
 				c.Response().Header().Set("Strict-Transport-Security", "max-age=31536000")
 			}
-			c.Response().Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+			c.Response().Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://res.cloudinary.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 			return next(c)
 		}
 	})
@@ -106,6 +107,10 @@ func (a *App) router() *echo.Echo {
 		}
 		if c.Path() == "/admin/login" {
 			_ = a.adminLoginProblem(c, code, message)
+			return
+		}
+		if imageRoute(c.Path()) {
+			_ = c.HTML(code, "<p class='notice error' role='alert'>"+template.HTMLEscapeString(message)+"</p>")
 			return
 		}
 		if c.Path() == "/r/:slug/m/:token" && c.Request().Method == http.MethodPost {
@@ -160,5 +165,10 @@ func (a *App) router() *echo.Echo {
 	e.POST("/admin/r/:slug/menu/:id", a.editMenuItem)
 	e.POST("/admin/r/:slug/menu", a.createMenuItem)
 	e.GET("/admin/r/:slug/qr/:number", a.tableQR)
+	e.POST("/admin/r/:slug/logo", a.uploadImage)
+	e.POST("/admin/r/:slug/menu/:id/photo", a.uploadImage)
+	e.GET("/r/:slug/imagens", a.imagesPage)
+	e.POST("/api/r/:slug/logo", a.uploadImage)
+	e.POST("/api/r/:slug/menu/:id/photo", a.uploadImage)
 	return e
 }

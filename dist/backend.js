@@ -18,6 +18,8 @@ async function refreshLive(){
   if(data.table){tableNumber=data.table.number;tableSeats=data.table.seats;tableCode=data.table.code||'';receiptItems=data.items;liveTotals=data.totals;}
   document.querySelector('.restaurant>span:last-child').innerHTML=`${escapeHTML(restaurantName)}<small>À SUA MESA</small>`;
   document.querySelector('.restaurant').setAttribute('aria-label',`${restaurantName}, início`);
+  const brand = document.querySelector('.restaurant .mezo-logo');
+  if (brand && data.restaurant.logoURL) { brand.src=data.restaurant.logoURL; brand.alt=restaurantName; brand.classList.add('restaurant-logo'); }
   document.title=`Mezô · ${restaurantName}`;
 }
 // Polling asks for the restaurant revision; the full state reloads when it changes and at least once a minute.

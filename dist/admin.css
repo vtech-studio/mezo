@@ -2,3 +2,5 @@
 .team-links{display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap}.staff-row{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:18px 0}.staff-row form{margin:0}.menu-edit{padding:18px 0;border-bottom:1px solid #ddd}.check-label{display:flex;align-items:center;gap:8px}.check-label input{width:auto;min-height:0}@media(max-width:540px){.staff-row{display:block}.staff-row form{margin:10px 0}}
 
 .mezo-logo{display:block;width:130px;height:auto;object-fit:contain}.brand{letter-spacing:normal}.brand span{font:14px/1.5 system-ui;letter-spacing:1.4px;margin-top:3px}.restaurant .mezo-logo{width:108px;flex-shrink:0}.restaurant{gap:14px;font-size:20px}.restaurant small{font-size:12px;letter-spacing:1px}.place{min-width:0}.place strong{overflow-wrap:anywhere}body{font-size:16px}small,.hint,.meta{line-height:1.5}
+
+.media-preview{display:block;width:180px;max-width:100%;height:135px;object-fit:cover;border-radius:14px;margin:12px 0;background:#f2eee6}.logo-preview{object-fit:contain}.photo-form{margin-bottom:28px;padding-bottom:24px;border-bottom:1px solid #dedbd2}input[type=file]{max-width:100%;white-space:normal}

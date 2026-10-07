@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -27,12 +28,19 @@ import (
 
 type Config struct {
 	AdminURL, Secret, AdminEmail, AdminPassword, Listen, Origin string
+	CloudName, CloudKey, CloudSecret                            string
 	Secure                                                      bool
 	Serverless                                                  bool
 }
 
 func loadConfig() (Config, error) {
 	c := Config{AdminURL: os.Getenv("DATABASE_ADMIN_URL"), Secret: os.Getenv("APP_SECRET"), AdminEmail: strings.ToLower(os.Getenv("ADMIN_EMAIL")), AdminPassword: os.Getenv("ADMIN_PASSWORD"), Listen: os.Getenv("LISTEN_ADDR"), Origin: strings.TrimRight(os.Getenv("APP_ORIGIN"), "/")}
+	c.CloudName, c.CloudKey, c.CloudSecret = os.Getenv("CLOUDINARY_CLOUD_NAME"), os.Getenv("CLOUDINARY_API_KEY"), os.Getenv("CLOUDINARY_API_SECRET")
+	if c.CloudName != "" || c.CloudKey != "" || c.CloudSecret != "" {
+		if !cloudNamePattern.MatchString(c.CloudName) || c.CloudKey == "" || c.CloudSecret == "" {
+			return c, errors.New("defina as três variáveis CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY e CLOUDINARY_API_SECRET")
+		}
+	}
 	if c.Listen == "" {
 		if port := os.Getenv("PORT"); port != "" {
 			n, err := strconv.Atoi(port)
@@ -85,6 +93,7 @@ type App struct {
 	pools          map[string]*cachedPool
 	hub            *Hub
 	openPool       func(context.Context, Tenant) (*pgxpool.Pool, error) // tests replace the restaurant connection
+	imageClient    *http.Client                                         // tests replace only the Cloudinary HTTP transport
 }
 
 func randomID() string {

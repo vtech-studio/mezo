@@ -19,6 +19,31 @@
     if (event.target.matches('[data-money]')) event.target.select();
   });
 
+  document.addEventListener('change', event => {
+    const input = event.target;
+    if (!input.matches('[data-image-form] input[type="file"]')) return;
+    input.setCustomValidity(input.files[0]?.size > 3 * 1024 * 1024 ? 'Escolha uma imagem de até 3 MB.' : '');
+    input.reportValidity();
+  });
+  document.addEventListener('htmx:beforeSwap', event => {
+    const {xhr, requestConfig} = event.detail;
+    if (requestConfig?.elt?.matches('[data-image-form]') && xhr.status >= 400 && xhr.getResponseHeader('Content-Type')?.includes('text/html')) {
+      event.detail.shouldSwap = true; event.detail.isError = false;
+    }
+  });
+  document.addEventListener('htmx:beforeRequest', event => {
+    if (event.detail.elt?.matches('[data-image-form]')) {
+      const target = document.querySelector(event.detail.elt.getAttribute('hx-target'));
+      if (target) target.textContent = 'Enviando imagem…';
+    }
+  });
+  document.addEventListener('htmx:afterRequest', event => {
+    const form = event.detail.elt;
+    if (form?.matches('[data-image-form]') && event.detail.xhr.status === 0) {
+      const target = document.querySelector(form.getAttribute('hx-target'));
+      if (target) target.textContent = 'Não foi possível confirmar o envio. Confira a conexão e tente novamente.';
+    }
+  });
   const login = document.getElementById('admin-login');
   if (!login) return;
   const result = document.getElementById('login-result'), button = login.querySelector('button');

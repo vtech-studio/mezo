@@ -110,21 +110,27 @@ func (a *App) adminPage(c echo.Context) error {
 				release()
 				return e
 			}
-			rows, e = p.Query(c.Request().Context(), "SELECT id,name,price,active FROM menu_items ORDER BY name")
+			var cardLogo string
+			if e = p.QueryRow(c.Request().Context(), "SELECT logo_url FROM restaurant_brand WHERE singleton").Scan(&cardLogo); e != nil {
+				release()
+				return e
+			}
+			card["LogoURL"] = cardLogo
+			rows, e = p.Query(c.Request().Context(), "SELECT id,name,price,active,image_url FROM menu_items ORDER BY name")
 			if e != nil {
 				release()
 				return e
 			}
 			for rows.Next() {
-				var id, name string
+				var id, name, imageURL string
 				var price int
 				var active bool
-				if e = rows.Scan(&id, &name, &price, &active); e != nil {
+				if e = rows.Scan(&id, &name, &price, &active, &imageURL); e != nil {
 					rows.Close()
 					release()
 					return e
 				}
-				menu = append(menu, map[string]any{"ID": id, "Name": name, "PriceBRL": priceBRL(price), "Active": active})
+				menu = append(menu, map[string]any{"ID": id, "Name": name, "PriceBRL": priceBRL(price), "Active": active, "ImageURL": imageURL})
 			}
 			e = rows.Err()
 			rows.Close()
@@ -138,7 +144,7 @@ func (a *App) adminPage(c echo.Context) error {
 		card["Tables"] = tables
 		cards = append(cards, card)
 	}
-	return a.renderTemplate(c, "admin.html", map[string]any{"LoggedIn": true, "CSRF": s.CSRF, "Restaurants": cards})
+	return a.renderTemplate(c, "admin.html", map[string]any{"LoggedIn": true, "CSRF": s.CSRF, "Restaurants": cards, "ImagesEnabled": a.cfg.CloudName != ""})
 }
 func (a *App) adminLogin(c echo.Context) error {
 	if err := a.origin(c); err != nil {

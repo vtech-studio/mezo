@@ -39,7 +39,11 @@ func (a *App) bootstrap(c echo.Context) error {
 		return echo.NewHTTPError(403, "Use o acesso da cozinha")
 	}
 	ctx := c.Request().Context()
-	out := map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name, "slug": x.Tenant.Slug}, "csrf": x.Session.CSRF, "role": kind, "paymentsEnabled": false, "revision": x.Tenant.Revision}
+	var logoURL string
+	if err = x.Pool.QueryRow(ctx, "SELECT logo_url FROM restaurant_brand WHERE singleton").Scan(&logoURL); err != nil {
+		return err
+	}
+	out := map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name, "slug": x.Tenant.Slug, "logoURL": logoURL}, "csrf": x.Session.CSRF, "role": kind, "paymentsEnabled": false, "revision": x.Tenant.Revision}
 	out["realtime"] = "events"
 	if a.cfg.Serverless {
 		out["realtime"] = "poll"
@@ -78,20 +82,20 @@ func (a *App) bootstrap(c echo.Context) error {
 		return err
 	}
 	out["calls"] = calls
-	rows, err = x.Pool.Query(ctx, "SELECT id,name,description,price,category,art,tags FROM menu_items WHERE active ORDER BY category,name")
+	rows, err = x.Pool.Query(ctx, "SELECT id,name,description,price,category,art,tags,image_url FROM menu_items WHERE active ORDER BY category,name")
 	if err != nil {
 		return err
 	}
 	menu := []map[string]any{}
 	for rows.Next() {
-		var id, name, desc, cat, art string
+		var id, name, desc, cat, art, imageURL string
 		var price int
 		var tags json.RawMessage
-		if err = rows.Scan(&id, &name, &desc, &price, &cat, &art, &tags); err != nil {
+		if err = rows.Scan(&id, &name, &desc, &price, &cat, &art, &tags, &imageURL); err != nil {
 			rows.Close()
 			return err
 		}
-		menu = append(menu, map[string]any{"id": id, "name": name, "description": desc, "price": price, "category": cat, "art": art, "tags": tags})
+		menu = append(menu, map[string]any{"id": id, "name": name, "description": desc, "price": price, "category": cat, "art": art, "tags": tags, "imageURL": imageURL})
 	}
 	err = rows.Err()
 	rows.Close()
