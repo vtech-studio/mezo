@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"regexp"
@@ -19,6 +20,9 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 func (a *App) home(c echo.Context) error { return a.renderTemplate(c, "home.html", nil) }
 func (a *App) renderTemplate(c echo.Context, name string, data any) error {
+	return a.renderTemplateStatus(c, 200, name, data)
+}
+func (a *App) renderTemplateStatus(c echo.Context, status int, name string, data any) error {
 	t, err := template.ParseFS(assets, "templates/"+name)
 	if err != nil {
 		return err
@@ -27,7 +31,21 @@ func (a *App) renderTemplate(c echo.Context, name string, data any) error {
 	if err = t.Execute(&b, data); err != nil {
 		return err
 	}
-	return c.HTML(200, b.String())
+	return c.HTML(status, b.String())
+}
+func (a *App) adminLoginProblem(c echo.Context, status int, message string) error {
+	retry, _ := strconv.Atoi(c.Response().Header().Get("Retry-After"))
+	if c.Request().Header.Get("HX-Request") == "true" {
+		return c.HTML(status, fmt.Sprintf("<p class='notice error' role='alert' data-retry-seconds='%d'><span data-login-message>%s</span></p>", retry, template.HTMLEscapeString(message)))
+	}
+	return a.renderTemplateStatus(c, status, "admin.html", map[string]any{"LoggedIn": false, "LoginError": message, "RetrySeconds": retry, "LoginEmail": strings.ToLower(strings.TrimSpace(c.FormValue("email")))})
+}
+func (a *App) teamEntry(c echo.Context) error {
+	slug := strings.ToLower(strings.TrimSpace(c.QueryParam("slug")))
+	if len(slug) > 60 || !slugPattern.MatchString(slug) {
+		return a.renderTemplateStatus(c, 400, "home.html", map[string]string{"TeamError": "Confira o identificador do restaurante fornecido pelo Mezô."})
+	}
+	return c.Redirect(http.StatusSeeOther, "/r/"+slug+"/garcom")
 }
 func adminProblem(c echo.Context, text string) error {
 	return c.HTML(200, "<p class='notice error' role='alert'>"+template.HTMLEscapeString(text)+"</p>")
@@ -131,15 +149,22 @@ func (a *App) adminLogin(c echo.Context) error {
 		return err
 	}
 	email := strings.ToLower(strings.TrimSpace(c.FormValue("email")))
+	password := c.FormValue("password")
+	if len(email) == 0 || len(email) > 200 || len(password) == 0 || len(password) > 72 {
+		return a.adminLoginProblem(c, 401, "E-mail ou senha inválidos")
+	}
 	if err := a.limitLogin(c, "admin:", email); err != nil {
 		return err
 	}
 	var hash string
 	err := a.control.QueryRow(c.Request().Context(), "SELECT password_hash FROM administrators WHERE email=$1", email).Scan(&hash)
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(c.FormValue("password"))) != nil {
-		return adminProblem(c, "E-mail ou senha inválidos")
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
+		return a.adminLoginProblem(c, 401, "E-mail ou senha inválidos. Use o acesso da plataforma; a equipe entra pelo link do restaurante.")
 	}
 	if err = a.newSession(c, "admin", "", email); err != nil {
+		return err
+	}
+	if err = a.resetLoginLimit(c, "admin:", email); err != nil {
 		return err
 	}
 	c.Response().Header().Set("HX-Redirect", "/admin")

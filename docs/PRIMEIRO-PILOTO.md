@@ -12,6 +12,12 @@ Atualizado em 06/10/2026. Esta versão permite atendimento pelo QR/NFC, pedido c
 6. Simule uma rodada completa: cliente escolhe quantidade e observação → revisa e confirma → conta atualizada e pedido na cozinha → preparo → pronto → entrega → conferência da conta → recebimento presencial → mesa encerrada → nova abertura sem consumo anterior.
 7. Confira recebimentos pelo menu do responsável e exporte CSV. Compare os registros de Pix com o banco, cartão com a maquininha e dinheiro com o caixa. O registro do Mezô é uma confirmação da equipe; não liquida pagamentos nem emite documento fiscal.
 
+## Escolher o acesso correto
+
+`/admin` é somente para os administradores da plataforma Mezô. O responsável do restaurante, o garçom e a cozinha entram pelo link do restaurante. Na página inicial, informe o identificador do restaurante no formulário “Acesso do restaurante”. A cozinha é direcionada à sua área após o login.
+
+Depois de muitas tentativas, a página exibe o tempo restante do bloqueio e pausa o botão até a liberação. Login bem-sucedido zera o contador da conta; o bloqueio de tentativas incorretas continua ativo entre instâncias.
+
 ## Regras da operação
 
 - Uma pessoa assume cada chamado/preparo. O responsável pode devolver chamados à fila ou concluir o preparo de um pedido assumido por outra pessoa.

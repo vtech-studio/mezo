@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,14 +29,32 @@ func tokenHash(token string) string {
 }
 func (a *App) limitLogin(c echo.Context, scope, email string) error {
 	var attempts int
-	err := a.control.QueryRow(c.Request().Context(), `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<now() THEN 1 ELSE login_attempts.attempts+1 END,reset_at=CASE WHEN login_attempts.reset_at<now() THEN now()+interval '15 minutes' ELSE login_attempts.reset_at END RETURNING attempts`, tokenHash(a.cfg.Secret+scope+strings.ToLower(strings.TrimSpace(email)))).Scan(&attempts)
+	var remaining int
+	err := a.control.QueryRow(c.Request().Context(), `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<=now() THEN 1 ELSE LEAST(login_attempts.attempts+1,16) END,reset_at=CASE WHEN login_attempts.reset_at<=now() THEN now()+interval '15 minutes' ELSE login_attempts.reset_at END RETURNING attempts,GREATEST(1,ceil(extract(epoch FROM (reset_at-now()))))::int`, a.loginKey(scope, email)).Scan(&attempts, &remaining)
 	if err != nil {
 		return err
 	}
 	if attempts > 15 {
-		return echo.NewHTTPError(429, "Muitas tentativas para este acesso. Aguarde 15 minutos.")
+		c.Response().Header().Set("Retry-After", strconv.Itoa(remaining))
+		return echo.NewHTTPError(429, fmt.Sprintf("Muitas tentativas para este acesso. Tente novamente em %d min e %d s.", remaining/60, remaining%60))
 	}
 	return nil
+}
+func (a *App) loginKey(scope, email string) string {
+	return tokenHash(a.cfg.Secret + scope + strings.ToLower(strings.TrimSpace(email)))
+}
+func (a *App) resetLoginLimit(c echo.Context, scope, email string) error {
+	_, err := a.control.Exec(c.Request().Context(), "DELETE FROM login_attempts WHERE key=$1", a.loginKey(scope, email))
+	return err
+}
+func (a *App) clientIP(r *http.Request) string {
+	// Vercel supplies this header; outside Vercel, forwarded headers are untrusted.
+	if a.cfg.Serverless {
+		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Vercel-Forwarded-For"))); ip != nil {
+			return ip.String()
+		}
+	}
+	return echo.ExtractIPDirect()(r)
 }
 func (a *App) origin(c echo.Context) error {
 	if c.Request().Header.Get("Origin") != a.cfg.Origin {
@@ -221,6 +242,9 @@ func (a *App) staffLogin(c echo.Context) error {
 	if err := decode(c, &in); err != nil {
 		return err
 	}
+	if len(in.Email) == 0 || len(in.Email) > 200 || len(in.Password) == 0 || len(in.Password) > 72 {
+		return echo.NewHTTPError(401, "E-mail ou senha inválidos")
+	}
 	if err := a.limitLogin(c, "staff:"+c.Param("slug"), in.Email); err != nil {
 		return err
 	}
@@ -249,6 +273,9 @@ func (a *App) staffLogin(c echo.Context) error {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	if err = a.resetLoginLimit(c, "staff:"+c.Param("slug"), in.Email); err != nil {
 		return err
 	}
 	return c.JSON(200, map[string]any{"ok": true, "role": role})

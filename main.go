@@ -55,14 +55,15 @@ func main() {
 func (a *App) router() *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
-	e.IPExtractor = echo.ExtractIPDirect()
+	e.IPExtractor = a.clientIP
 	e.Server.ReadHeaderTimeout = 5 * time.Second
 	e.Server.IdleTimeout = 60 * time.Second
 	e.Server.MaxHeaderBytes = 64 * 1024
 	loginLimit := middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
 		Store: middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{Rate: 0.1, Burst: 10, ExpiresIn: 5 * time.Minute}),
 		DenyHandler: func(c echo.Context, _ string, _ error) error {
-			return echo.NewHTTPError(429, "Muitas tentativas. Aguarde um momento antes de entrar novamente.")
+			c.Response().Header().Set("Retry-After", "10")
+			return echo.NewHTTPError(429, "Muitas tentativas. Aguarde 10 segundos antes de entrar novamente.")
 		},
 	})
 	e.Use(middleware.Recover(), middleware.BodyLimit("32K"))
@@ -93,6 +94,10 @@ func (a *App) router() *echo.Echo {
 		}
 		if code == 500 {
 			slog.Error("requisição falhou", "path", c.Path(), "error", err)
+		}
+		if c.Path() == "/admin/login" {
+			_ = a.adminLoginProblem(c, code, message)
+			return
 		}
 		_ = c.JSON(code, map[string]string{"error": message})
 	}
@@ -148,6 +153,7 @@ func (a *App) router() *echo.Echo {
 	e.GET("/api/r/:slug/events", a.events)
 	e.GET("/admin", a.adminPage)
 	e.POST("/admin/login", a.adminLogin, loginLimit)
+	e.GET("/equipe", a.teamEntry)
 	e.POST("/admin/logout", a.adminLogout)
 	e.POST("/admin/restaurants", a.createRestaurant)
 	e.POST("/admin/r/:slug/staff", a.createStaff)
