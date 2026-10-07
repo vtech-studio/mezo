@@ -52,4 +52,8 @@ func TestStaticAssetsAreVersionedAndCached(t *testing.T) {
 	if !strings.Contains(customerPage, `<meta name="mezo-runtime" content="server">`) {
 		t.Fatal("app do cliente sem o marcador de execução no servidor")
 	}
+	// Form posts (table code, admin login without JavaScript) need the real Origin.
+	if policy := get("/", "").Header().Get("Referrer-Policy"); policy != "same-origin" {
+		t.Fatalf("política de referência %q faz o navegador enviar Origin nulo em formulários", policy)
+	}
 }

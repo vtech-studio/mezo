@@ -69,7 +69,9 @@ func (a *App) router() *echo.Echo {
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			c.Response().Header().Set("X-Content-Type-Options", "nosniff")
-			c.Response().Header().Set("Referrer-Policy", "no-referrer")
+			// No referrer leaves the site. Under no-referrer, browsers also send
+			// "Origin: null" on form posts, which the origin check rejects.
+			c.Response().Header().Set("Referrer-Policy", "same-origin")
 			c.Response().Header().Set("Cache-Control", "no-store")
 			if a.cfg.Secure {
 				c.Response().Header().Set("Strict-Transport-Security", "max-age=31536000")
