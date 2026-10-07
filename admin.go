@@ -318,7 +318,7 @@ func (a *App) editMenuItem(c echo.Context) error {
 	if tag.RowsAffected() != 1 {
 		return echo.ErrNotFound
 	}
-	a.hub.publish(t.ID, "")
+	a.notify(c.Request().Context(), t.ID, "")
 	return adminOK(c, "Cardápio atualizado. Pedidos anteriores preservam seus preços.")
 }
 func (a *App) createMenuItem(c echo.Context) error {
@@ -343,7 +343,7 @@ func (a *App) createMenuItem(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	a.hub.publish(t.ID, "")
+	a.notify(c.Request().Context(), t.ID, "")
 	return adminOK(c, "Item adicionado ao cardápio")
 }
 func (a *App) tableQR(c echo.Context) error {

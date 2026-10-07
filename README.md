@@ -90,7 +90,7 @@ Importe o repositório GitHub e configure estas variáveis no ambiente de produ�
 
 Guarde credenciais como variáveis sensíveis. Para uma demonstração com Casa do Sol, use `SEED_DEMO=true` e defina também `DEMO_STAFF_PASSWORD`; são dados fictícios. A alteração de `ADMIN_PASSWORD` não redefine uma conta já criada. Não compartilhe o banco de produção com deploys de prévia: use outro projeto PostgreSQL e outros segredos para testar mudanças. Por isso, um deploy com `VERCEL_ENV` diferente de `production` não inicia, mesmo que receba as variáveis de produção. Para usar prévias, configure no ambiente Preview um banco separado e `MEZO_ALLOW_PREVIEW=true`.
 
-Na Vercel, a interface consulta o banco a cada cinco segundos enquanto a página está visível. Isso permite receber chamados entre diferentes instâncias de execução. O modo local continua usando SSE. As conexões ficam em pools por instância; dimensione o limite do PostgreSQL considerando o número de instâncias, restaurantes ativos e conexões administrativas.
+Na Vercel, a interface consulta a cada cinco segundos, enquanto a página está visível, a revisão do restaurante: uma única consulta ao banco central, sem abrir o banco do restaurante. O estado completo só é recarregado quando a revisão muda, e no máximo a cada minuto sem mudanças. Cada alteração avança a revisão; assim os chamados chegam entre diferentes instâncias de execução. O modo local continua usando SSE para o cliente. As conexões ficam em pools por instância; dimensione o limite do PostgreSQL considerando o número de instâncias, restaurantes ativos e conexões administrativas.
 
 ### Supabase
 

@@ -123,7 +123,7 @@ func (a *App) operations(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(200, map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name}, "csrf": x.Session.CSRF, "staff": map[string]string{"id": x.Session.Subject, "name": name, "role": x.Role}, "orders": orders})
+	return c.JSON(200, map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name}, "csrf": x.Session.CSRF, "staff": map[string]string{"id": x.Session.Subject, "name": name, "role": x.Role}, "orders": orders, "revision": x.Tenant.Revision})
 }
 
 func (a *App) createOrder(c echo.Context) error {
@@ -257,7 +257,7 @@ func (a *App) submitOrder(c echo.Context, customer bool) error {
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, session)
+	a.notify(c.Request().Context(), x.Tenant.ID, session)
 	return c.JSON(201, map[string]any{"id": id, "duplicate": false})
 }
 
@@ -355,7 +355,7 @@ func (a *App) updateOrder(c echo.Context) error {
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, session)
+	a.notify(c.Request().Context(), x.Tenant.ID, session)
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 

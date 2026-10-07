@@ -1,13 +1,50 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 )
+
+// notify wakes this instance's event streams and advances the restaurant
+// revision, which polling screens on any instance compare before reloading.
+func (a *App) notify(ctx context.Context, tenant, session string) {
+	a.hub.publish(tenant, session)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancel()
+	if _, err := a.control.Exec(ctx, "UPDATE tenants SET revision=revision+1 WHERE id=$1", tenant); err != nil {
+		slog.Warn("revisão do restaurante não registrada", "tenant", tenant, "error", err)
+	}
+}
+
+// revision answers polling screens with one query to the central database and
+// no restaurant connection; they fetch the full state only when it changes.
+func (a *App) revision(c echo.Context) error {
+	kind := "customer"
+	if c.QueryParam("role") == "staff" {
+		kind = "staff"
+	}
+	cookie, err := c.Cookie("mezo_" + kind)
+	if err != nil {
+		return echo.NewHTTPError(401, "Entre para continuar")
+	}
+	var revision int64
+	err = a.control.QueryRow(c.Request().Context(), "SELECT t.revision FROM auth_sessions s JOIN tenants t ON t.id=s.tenant_id WHERE s.token_hash=$1 AND s.kind=$2 AND s.expires_at>now() AND t.slug=$3 AND t.status='active'", tokenHash(cookie.Value), kind, c.Param("slug")).Scan(&revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(401, "Acesso não autorizado para este restaurante")
+	}
+	if err != nil {
+		return err
+	}
+	return c.JSON(200, map[string]int64{"revision": revision})
+}
 
 type subscription struct {
 	tenant, session string

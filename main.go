@@ -133,6 +133,7 @@ func (a *App) router() *echo.Echo {
 	e.POST("/api/r/:slug/tables/:number/close", a.closeTable)
 	e.POST("/api/r/:slug/tables/:number/open", a.openTable)
 	e.GET("/api/r/:slug/events", a.events)
+	e.GET("/api/r/:slug/revision", a.revision)
 	e.GET("/admin", a.adminPage)
 	e.POST("/admin/login", a.adminLogin, loginLimit)
 	e.GET("/equipe", a.teamEntry)
