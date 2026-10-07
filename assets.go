@@ -17,7 +17,7 @@ type staticAsset struct {
 
 // Pages reference these files with a content version, so browsers and the
 // Vercel CDN keep them until the file changes in a new deploy.
-var staticAssets = loadStaticAssets("styles.css", "app.js", "backend.js", "customer.js", "favicon.svg", "mezo-logo.png", "admin.css", "admin.js", "htmx.min.js", "workstation.css", "workstation.js")
+var staticAssets = loadStaticAssets("styles.css", "app.js", "backend.js", "customer.js", "favicon.svg", "mezo-logo.png", "admin.css", "admin.js", "htmx.min.js", "workstation.css", "workstation.js", "staff-alerts.js", "manifest.webmanifest", "icon-192.png", "icon-512.png", "icon-maskable-512.png")
 
 func loadStaticAssets(names ...string) map[string]staticAsset {
 	out := make(map[string]staticAsset, len(names))
@@ -34,6 +34,8 @@ func loadStaticAssets(names ...string) map[string]staticAsset {
 			mime = "image/svg+xml"
 		case strings.HasSuffix(name, ".png"):
 			mime = "image/png"
+		case strings.HasSuffix(name, ".webmanifest"):
+			mime = "application/manifest+json"
 		}
 		sum := sha256.Sum256(body)
 		out[name] = staticAsset{body: body, mime: mime, version: hex.EncodeToString(sum[:6])}
