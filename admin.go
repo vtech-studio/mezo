@@ -60,88 +60,21 @@ func (a *App) adminPage(c echo.Context) error {
 	}
 	cards := []map[string]any{}
 	for _, t := range tenants {
-		card := map[string]any{"Name": t.Name, "Slug": t.Slug, "Status": t.Status, "TeamURL": "/r/" + t.Slug + "/garcom", "KitchenURL": "/r/" + t.Slug + "/cozinha"}
-		tables := []map[string]any{}
+		card := map[string]any{"Name": t.Name, "Slug": t.Slug, "Status": t.Status, "TeamURL": "/r/" + t.Slug + "/garcom", "KitchenURL": "/r/" + t.Slug + "/cozinha", "Base": "/admin/r/" + t.Slug, "CSRF": s.CSRF, "ImagesEnabled": a.cfg.CloudName != ""}
 		if t.Status == "active" {
 			p, release, e := a.lease(c.Request().Context(), t)
 			if e != nil {
 				return e
 			}
-			rows, e := p.Query(c.Request().Context(), "SELECT number,qr_token FROM dining_tables ORDER BY number")
-			if e != nil {
-				release()
-				return e
-			}
-			for rows.Next() {
-				var n int
-				var token string
-				if e = rows.Scan(&n, &token); e != nil {
-					rows.Close()
-					release()
-					return e
-				}
-				tables = append(tables, map[string]any{"Number": n, "URL": "/r/" + t.Slug + "/m/" + token, "QR": "/admin/r/" + t.Slug + "/qr/" + strconv.Itoa(n)})
-			}
-			e = rows.Err()
-			rows.Close()
-			if e != nil {
-				release()
-				return e
-			}
-			staff, menu := []map[string]any{}, []map[string]any{}
-			rows, e = p.Query(c.Request().Context(), "SELECT id,name,email,role,active FROM staff ORDER BY name")
-			if e != nil {
-				release()
-				return e
-			}
-			for rows.Next() {
-				var id, name, email, role string
-				var active bool
-				if e = rows.Scan(&id, &name, &email, &role, &active); e != nil {
-					rows.Close()
-					release()
-					return e
-				}
-				staff = append(staff, map[string]any{"ID": id, "Name": name, "Email": email, "Role": role, "Active": active})
-			}
-			e = rows.Err()
-			rows.Close()
-			if e != nil {
-				release()
-				return e
-			}
-			var cardLogo string
-			if e = p.QueryRow(c.Request().Context(), "SELECT logo_url FROM restaurant_brand WHERE singleton").Scan(&cardLogo); e != nil {
-				release()
-				return e
-			}
-			card["LogoURL"] = cardLogo
-			rows, e = p.Query(c.Request().Context(), "SELECT id,name,price,active,image_url FROM menu_items ORDER BY name")
-			if e != nil {
-				release()
-				return e
-			}
-			for rows.Next() {
-				var id, name, imageURL string
-				var price int
-				var active bool
-				if e = rows.Scan(&id, &name, &price, &active, &imageURL); e != nil {
-					rows.Close()
-					release()
-					return e
-				}
-				menu = append(menu, map[string]any{"ID": id, "Name": name, "PriceBRL": priceBRL(price), "Active": active, "ImageURL": imageURL})
-			}
-			e = rows.Err()
-			rows.Close()
+			data, e := houseData(c.Request().Context(), p, t.Slug)
 			release()
 			if e != nil {
 				return e
 			}
-			card["Staff"] = staff
-			card["Menu"] = menu
+			for k, v := range data {
+				card[k] = v
+			}
 		}
-		card["Tables"] = tables
 		cards = append(cards, card)
 	}
 	return a.renderTemplate(c, "admin.html", map[string]any{"LoggedIn": true, "CSRF": s.CSRF, "Restaurants": cards, "ImagesEnabled": a.cfg.CloudName != ""})
@@ -212,18 +145,12 @@ func (a *App) createRestaurant(c echo.Context) error {
 	return adminOK(c, "Restaurante cadastrado com banco próprio. O cardápio começa vazio; cadastre os itens abaixo. As mesas começam fechadas: a equipe abre cada uma ao receber os clientes.")
 }
 func (a *App) createStaff(c echo.Context) error {
-	if _, err := a.session(c, "admin", "", true); err != nil {
-		return err
-	}
-	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-	if err != nil {
-		return echo.ErrNotFound
-	}
-	p, release, err := a.lease(c.Request().Context(), t)
+	h, err := a.houseAccess(c, true)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer h.Release()
+	p := h.Pool
 	name, email, password := strings.TrimSpace(c.FormValue("name")), strings.ToLower(strings.TrimSpace(c.FormValue("email"))), c.FormValue("password")
 	role := c.FormValue("role")
 	if role == "" {
@@ -250,18 +177,12 @@ func (a *App) createStaff(c echo.Context) error {
 	return adminOK(c, "Atendente cadastrado")
 }
 func (a *App) setStaffActive(c echo.Context) error {
-	if _, err := a.session(c, "admin", "", true); err != nil {
-		return err
-	}
-	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-	if err != nil {
-		return echo.ErrNotFound
-	}
-	p, release, err := a.lease(c.Request().Context(), t)
+	h, err := a.houseAccess(c, true)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer h.Release()
+	t, p := h.Tenant, h.Pool
 	active := c.FormValue("active")
 	if active != "true" && active != "false" {
 		return adminProblem(c, "Estado inválido")
@@ -272,9 +193,22 @@ func (a *App) setStaffActive(c echo.Context) error {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var id string
-	if err = tx.QueryRow(ctx, "SELECT id FROM staff WHERE id=$1 FOR UPDATE", c.Param("id")).Scan(&id); err != nil {
+	var id, role string
+	if err = tx.QueryRow(ctx, "SELECT id,role FROM staff WHERE id=$1 FOR UPDATE", c.Param("id")).Scan(&id, &role); err != nil {
 		return echo.ErrNotFound
+	}
+	if active == "false" && id == h.Manager {
+		return adminProblem(c, "Você não pode desativar o seu próprio acesso")
+	}
+	if active == "false" && role == "manager" {
+		// Locks the other managers, so two simultaneous deactivations cannot remove both.
+		var others int
+		if err = tx.QueryRow(ctx, "SELECT count(*) FROM (SELECT 1 FROM staff WHERE role='manager' AND active AND id<>$1 FOR UPDATE) m", id).Scan(&others); err != nil {
+			return err
+		}
+		if others == 0 {
+			return adminProblem(c, "Mantenha pelo menos um responsável ativo no restaurante")
+		}
 	}
 	if active == "false" {
 		var busy bool
@@ -289,7 +223,7 @@ func (a *App) setStaffActive(c echo.Context) error {
 		return err
 	}
 	if active == "false" {
-		if _, err = a.control.Exec(ctx, "DELETE FROM auth_sessions WHERE tenant_id=$1 AND kind='staff' AND subject=$2", t.ID, id); err != nil {
+		if err = a.revokeStaff(ctx, t.ID, id); err != nil {
 			return err
 		}
 	}
@@ -299,18 +233,12 @@ func (a *App) setStaffActive(c echo.Context) error {
 	return adminOK(c, "Acesso da equipe atualizado")
 }
 func (a *App) editMenuItem(c echo.Context) error {
-	if _, err := a.session(c, "admin", "", true); err != nil {
-		return err
-	}
-	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-	if err != nil {
-		return echo.ErrNotFound
-	}
-	p, release, err := a.lease(c.Request().Context(), t)
+	h, err := a.houseAccess(c, true)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer h.Release()
+	t, p := h.Tenant, h.Pool
 	name := strings.TrimSpace(c.FormValue("name"))
 	price, err := parsePriceBRL(c.FormValue("priceBRL"))
 	active := c.FormValue("active") == "true"
@@ -328,18 +256,12 @@ func (a *App) editMenuItem(c echo.Context) error {
 	return adminOK(c, "Cardápio atualizado. Pedidos anteriores preservam seus preços.")
 }
 func (a *App) createMenuItem(c echo.Context) error {
-	if _, err := a.session(c, "admin", "", true); err != nil {
-		return err
-	}
-	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-	if err != nil {
-		return echo.ErrNotFound
-	}
-	p, release, err := a.lease(c.Request().Context(), t)
+	h, err := a.houseAccess(c, true)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer h.Release()
+	t, p := h.Tenant, h.Pool
 	name, category, desc := strings.TrimSpace(c.FormValue("name")), c.FormValue("category"), c.FormValue("description")
 	price, err := parsePriceBRL(c.FormValue("priceBRL"))
 	if err != nil || price < 0 || price > 10000000 || name == "" || len(name) > 100 || len(desc) > 500 || !(category == "Entradas" || category == "Principais" || category == "Bebidas" || category == "Sobremesas") {
@@ -353,18 +275,12 @@ func (a *App) createMenuItem(c echo.Context) error {
 	return adminOK(c, "Item adicionado ao cardápio")
 }
 func (a *App) tableQR(c echo.Context) error {
-	if _, err := a.session(c, "admin", "", false); err != nil {
-		return err
-	}
-	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-	if err != nil {
-		return echo.ErrNotFound
-	}
-	p, release, err := a.lease(c.Request().Context(), t)
+	h, err := a.houseAccess(c, false)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer h.Release()
+	t, p := h.Tenant, h.Pool
 	n, err := strconv.Atoi(c.Param("number"))
 	if err != nil {
 		return echo.ErrNotFound

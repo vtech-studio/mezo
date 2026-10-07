@@ -47,6 +47,7 @@ O catálogo e as permissões são criados pelo provisionador configurado em DATA
 - Encerrar a mesa exige resolver os pedidos pendentes, conferir o total e confirmar o pagamento presencial. Dinheiro, Pix conferido no banco e cartão na maquininha são registrados; o aplicativo não processa essas transações. O responsável consulta recebimentos do dia e exporta CSV pelo menu de seu acesso.
 - Encerrar a conta presencial invalida o acesso àquela sessão. Reabrir a mesa cria uma conta nova, sem consumo ou chamados da conta anterior.
 - Administradores cadastram restaurantes e equipe com função, editam preços/disponibilidade, desativam acessos e geram QR codes. A equipe pode trocar a senha; os acessos anteriores são revogados. Tentativas de login são limitadas também no banco, entre instâncias da Vercel.
+- O responsável do restaurante administra a própria casa em `/r/<restaurante>/gestao`, pelo menu “Seu acesso”: cardápio (itens, preços e disponibilidade), equipe (cadastro, desativação e nova senha inicial para quem esqueceu a senha) e QR das mesas. São as mesmas ações do painel da plataforma, limitadas ao restaurante. Ninguém desativa o próprio acesso, e o restaurante mantém sempre pelo menos um responsável ativo.
 
 ## Docker e hospedagem
 
