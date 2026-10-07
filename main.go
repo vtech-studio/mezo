@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -109,25 +108,8 @@ func (a *App) router() *echo.Echo {
 		}
 		return c.JSON(200, map[string]string{"status": "ok", "app": "Mezô"})
 	})
-	for _, name := range []string{"styles.css", "app.js", "backend.js", "customer.js", "favicon.svg", "mezo-logo.png", "admin.css", "admin.js", "htmx.min.js", "workstation.css", "workstation.js"} {
-		name := name
-		e.GET("/"+name, func(c echo.Context) error {
-			b, err := assets.ReadFile("dist/" + name)
-			if err != nil {
-				return echo.ErrNotFound
-			}
-			mime := "text/javascript; charset=utf-8"
-			if strings.HasSuffix(name, ".css") {
-				mime = "text/css; charset=utf-8"
-			}
-			if name == "favicon.svg" {
-				mime = "image/svg+xml"
-			}
-			if name == "mezo-logo.png" {
-				mime = "image/png"
-			}
-			return c.Blob(200, mime, b)
-		})
+	for name := range staticAssets {
+		e.GET("/"+name, serveAsset(name))
 	}
 	e.GET("/", a.home)
 	e.GET("/r/:slug/m/:token", a.enterTable)

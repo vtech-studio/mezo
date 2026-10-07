@@ -69,6 +69,8 @@ O projeto inclui `vercel.json` com o preset Go e região São Paulo (`gru1`). A 
 
 As dependências estão incluídas em `vendor` para o build não depender do download dos módulos. Depois de atualizar `go.mod`/`go.sum`, execute `go mod vendor` e inclua a atualização no Git.
 
+As páginas referenciam CSS, JavaScript e imagens com a versão do conteúdo na URL (`/app.js?v=…`). Essas respostas ficam em cache no navegador e na CDN da Vercel; um deploy que altere o arquivo gera outra URL. O logo servido tem 390 px de largura; o original em alta resolução, para impressão, fica em `docs/brand/mezo-logo.png`.
+
 O build usa `-buildvcs=false` porque o checkout preparado pela Vercel não mantém todos os metadados Git necessários ao stamping do Go. O commit de origem continua identificado pela própria plataforma.
 
 A [prévia pública da mesa 8](https://mezo-demo.vercel.app/#mesa) mostra a interface com dados fictícios. Os arquivos de seu QR code estão em `docs/qr`; a placa identifica que é uma prévia. Esse QR não representa uma mesa de um restaurante em produção.

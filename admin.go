@@ -23,12 +23,8 @@ func (a *App) renderTemplate(c echo.Context, name string, data any) error {
 	return a.renderTemplateStatus(c, 200, name, data)
 }
 func (a *App) renderTemplateStatus(c echo.Context, status int, name string, data any) error {
-	t, err := template.ParseFS(assets, "templates/"+name)
-	if err != nil {
-		return err
-	}
 	var b bytes.Buffer
-	if err = t.Execute(&b, data); err != nil {
+	if err := pages.ExecuteTemplate(&b, name, data); err != nil {
 		return err
 	}
 	return c.HTML(status, b.String())
