@@ -45,6 +45,11 @@ func loadConfig() (Config, error) {
 		}
 	}
 	c.Serverless = os.Getenv("VERCEL") == "1"
+	// Vercel previews inherit any variable shared with production. Refuse to
+	// start them unless a separate database was configured on purpose.
+	if env := os.Getenv("VERCEL_ENV"); c.Serverless && env != "" && env != "production" && os.Getenv("MEZO_ALLOW_PREVIEW") != "true" {
+		return c, errors.New("deploy de prévia desativado: configure um PostgreSQL separado e MEZO_ALLOW_PREVIEW=true no ambiente Preview")
+	}
 	if c.Origin == "" {
 		if c.Serverless {
 			return c, errors.New("defina APP_ORIGIN com a URL HTTPS de produção na Vercel")
