@@ -7,6 +7,7 @@
  const age=value=>{const m=Math.max(0,Math.floor((Date.now()-value)/60000));return m===0?'agora':`há ${m} min`;};
  const labels={queued:'Na fila',preparing:'Em preparo',ready:'Pronto',delivered:'Entregue',cancelled:'Cancelado'};
  const reasons={help:'Preciso de ajuda',order:'Ajuda para pedir',water:'Pedir água',bill:'Pedir a conta'};
+ const pad=n=>String(n).padStart(2,'0'),baseTitle=document.title;
  let data=null,csrf='',busy=false,refreshing=false,online=false,timer=null,toastTimer=null,filter='active',route=location.hash.slice(1)|| (view==='kitchen'?'pedidos':'chamados');
  let pending=null,revision=null,loadedAt=0;
  const pendingKey=()=>`mezo-pending:${slug}:${data?.staff.id}`;
@@ -23,7 +24,7 @@
   }catch(e){if(e.name==='AbortError'||e instanceof TypeError)throw new Error('Sem resposta do servidor. Confira a conexão antes de tentar novamente.');throw e;}finally{clearTimeout(timeout);}
  }
  function showLogin(message=''){
-  data=null;online=false;nav.innerHTML='';document.getElementById('account-button').hidden=true;connection.textContent=`Acesso da ${view==='kitchen'?'cozinha':'equipe do salão'}`;connection.className='connection';
+  data=null;online=false;nav.innerHTML='';MezoAlerts.reset();document.title=baseTitle;document.getElementById('account-button').hidden=true;connection.textContent=`Acesso da ${view==='kitchen'?'cozinha':'equipe do salão'}`;connection.className='connection';
   if(drawer.open)drawer.close();
   content.innerHTML=`<section class="login"><p class="eyebrow">${view==='kitchen'?'COZINHA':'GARÇOM'} · ACESSO DA EQUIPE</p><h1>${view==='kitchen'?'Cada prato,<br><em>no seu tempo.</em>':'Bom atendimento<br><em>começa aqui.</em>'}</h1><p class="intro">Entre com o acesso fornecido pelo restaurante.</p><form id="login-form"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="200"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="72"><p class="error" id="form-error" role="alert">${esc(message)}</p><button class="button full">Entrar →</button></form><p class="hint">Cada pessoa deve usar seu próprio acesso.</p><a class="hint" href="/r/${esc(slug)}/${view==='kitchen'?'garcom':'cozinha'}">Acesso ${view==='kitchen'?'do garçom':'da cozinha'} →</a></section>`;
  }
@@ -44,7 +45,7 @@
    const result=await api(`/operations?view=${view}`);data=result;csrf=result.csrf;online=true;revision=result.revision??null;loadedAt=Date.now();
    markUpdated();
    if(!pending){try{const stored=JSON.parse(sessionStorage.getItem(pendingKey()));if(stored&&typeof stored.key==='string'&&Array.isArray(stored.items))pending=stored;}catch{}}
-   render();
+   announce();render();
   }catch(e){
    if(e.status===401){showLogin();}else if(e.status===403){showLogin(e.message);}else{online=false;connection.textContent='Sem atualização · confira a conexão e tente atualizar';connection.className='connection offline';if(data)render();else showLogin(e.message);}
   }finally{refreshing=false;}
@@ -61,7 +62,21 @@
   if(view==='waiter'&&data.staff.role==='manager'&&['queued','preparing','ready'].includes(o.status))action+=`<div class="actions">${button('Cancelar pedido','cancel',o.id,'danger')}</div>`;
   return `<article class="card"><div class="card-top"><div><span class="ticket-id">PEDIDO ${esc(o.id.slice(-5).toUpperCase())}</span><h2 class="table-number">Mesa ${String(o.table).padStart(2,'0')}</h2><p class="meta">${o.source==='customer'?'Pedido pelo cliente':'Pedido pelo salão'} · ${age(o.created)}</p></div><span class="badge ${o.status}">${labels[o.status]}</span></div><ul class="ticket-items">${o.items.map(i=>`<li><span class="quantity">${i.qty}×</span><div><h3>${esc(i.name)}</h3>${i.note?`<small>${esc(i.note)}</small>`:''}</div></li>`).join('')}</ul>${o.note?`<p class="note">${esc(o.note)}</p>`:''}${o.assigned?`<p class="meta">Preparo: ${esc(o.assigned)}</p>`:''}${action}</article>`;
  }
+ // What needs someone now: calls and dishes to serve in the dining room, new tickets in the kitchen.
+ function attention(){
+  if(view==='kitchen')return data.orders.filter(o=>o.status==='queued').map(o=>({key:'q'+o.id,text:`Novo pedido · mesa ${pad(o.table)}`}));
+  return [...data.calls.filter(c=>c.status==='pending').map(c=>({key:'c'+c.id,text:`Mesa ${pad(c.table)} · ${reasons[c.reason]}`})),...data.orders.filter(o=>o.status==='ready').map(o=>({key:'r'+o.id,text:`Pedido pronto · mesa ${pad(o.table)}`}))];
+ }
+ function announce(){
+  const items=attention(),fresh=MezoAlerts.arrivals(items);
+  document.title=items.length?`(${items.length}) ${baseTitle}`:baseTitle;
+  if(fresh.length)notify(fresh.length>1?`${fresh[0].text} e mais ${fresh.length-1}`:fresh[0].text);
+ }
  function render(){
+  renderView();
+  if(data&&!MezoAlerts.enabled)content.insertAdjacentHTML('afterbegin',`<article class="card"><h3>Ative os alertas</h3><p class="hint">Som e vibração a cada ${view==='kitchen'?'pedido novo':'chamado novo ou prato pronto'}, com a tela acesa enquanto o Mezô estiver aberto.</p>${button('Ativar alertas','alerts','','full')}</article>`);
+ }
+ function renderView(){
   if(!data)return;navigation();
   if(route==='mesas'&&view==='waiter'){
    content.innerHTML=`<p class="eyebrow">SALÃO · ${data.tables.length} MESAS</p><h1>Cada mesa<br><em>importa.</em></h1><p class="intro">Acompanhe as contas e ajude o cliente quando precisar.</p>${pending?`<article class="card"><h3>Um envio precisa de confirmação</h3><p class="hint">Mesa ${pending.table}. Confira os pedidos antes de iniciar outro.</p>${button('Retomar envio','resume','','full')}</article>`:''}<div class="table-grid">${data.tables.map(t=>{const calls=data.calls.filter(c=>c.table===t.number&&['pending','progress'].includes(c.status));return `<button class="table-button ${calls.length?'called':''}" data-action="table" data-id="${t.number}"><span class="badge ${calls.length?'queued':''}">${calls.length?'Chamado':t.sessionId?'Aberta':'Livre'}</span><strong>${String(t.number).padStart(2,'0')}</strong><small>${t.sessionId?money(t.subtotal)+(t.code?' · código '+esc(t.code):' · consumo'):'Pronta para receber'}</small></button>`;}).join('')}</div>`;return;
@@ -95,7 +110,7 @@
   const bill=await api(`/tables/${number}/bill`);
   open(`Encerrar · mesa ${number}`,`<form id="settle-form" data-table="${number}" data-total="${bill.total}"><div class="total grand"><span>Total a receber</span><span>${money(bill.total)}</span></div><p class="drawer-intro">Confirme somente depois de receber o pagamento presencial.</p><label for="method">Pagamento recebido por</label><select id="method" required><option value="">Selecione</option><option value="pix">Pix conferido no banco</option><option value="card">Cartão na maquininha</option><option value="cash">Dinheiro</option><option value="other">Outra forma presencial</option></select><label><input id="received" type="checkbox" required> Confirmo o recebimento e o encerramento da mesa.</label><p class="error" role="alert"></p><button class="button full">Registrar recebimento e encerrar</button><p class="hint">O Mezô registra esta confirmação. O pagamento é realizado fora do aplicativo.</p></form>`);
  }
- function account(){open('Seu acesso',`<p class="eyebrow">${esc(data.staff.name)}</p><div class="account-links">${data.staff.role==='manager'?`<a class="button secondary" href="/r/${esc(slug)}/${view==='kitchen'?'garcom':'cozinha'}">Abrir ${view==='kitchen'?'salão':'cozinha'} →</a><a class="button secondary" href="/r/${esc(slug)}/imagens">Logo e fotos dos pratos →</a>${button('Recebimentos do dia','receipts','','secondary')}`:''}${button('Atualizar agora','refresh','','secondary')}${button('Trocar senha','password','','secondary')}${button('Sair do acesso','logout','','secondary')}</div>`);}
+ function account(){open('Seu acesso',`<p class="eyebrow">${esc(data.staff.name)}</p><div class="account-links">${data.staff.role==='manager'?`<a class="button secondary" href="/r/${esc(slug)}/${view==='kitchen'?'garcom':'cozinha'}">Abrir ${view==='kitchen'?'salão':'cozinha'} →</a><a class="button secondary" href="/r/${esc(slug)}/imagens">Logo e fotos dos pratos →</a>${button('Recebimentos do dia','receipts','','secondary')}`:''}${button(MezoAlerts.enabled?'Desligar alertas':'Ativar alertas','alerts','','secondary')}${button('Atualizar agora','refresh','','secondary')}${button('Trocar senha','password','','secondary')}${button('Sair do acesso','logout','','secondary')}</div>`);}
  document.getElementById('account-button').addEventListener('click',account);
  document.getElementById('close-drawer').addEventListener('click',()=>drawer.close());
  window.addEventListener('hashchange',()=>{route=location.hash.slice(1)||'pedidos';render();});
@@ -106,6 +121,7 @@
   if(action==='cancel'){open('Cancelar pedido',`<form id="cancel-form" data-id="${esc(id)}"><p class="drawer-intro">O valor será retirado da conta. Confirme com a cozinha antes de cancelar.</p><label for="cancel-note">Motivo obrigatório</label><textarea id="cancel-note" maxlength="300" required></textarea><p class="error" role="alert"></p><button class="button danger full">Confirmar cancelamento</button></form>`);return;}
   if(action==='password'){open('Trocar sua senha',`<form id="password-form"><label for="current">Senha atual</label><input id="current" type="password" autocomplete="current-password" required><label for="new-password">Nova senha</label><input id="new-password" type="password" autocomplete="new-password" minlength="12" maxlength="72" required><p class="hint">Os acessos anteriores serão encerrados.</p><p class="error" role="alert"></p><button class="button full">Salvar nova senha</button></form>`);return;}
   if(action==='resume'){resume();return;}if(action==='review'){drawer.close();location.hash='pedidos';return;}
+  if(action==='alerts'){MezoAlerts.set(!MezoAlerts.enabled);if(drawer.open)drawer.close();notify(MezoAlerts.enabled?'Alertas ligados: som, vibração e tela acesa.':'Alertas desligados.');render();return;}
   busy=true;b.disabled=true;
   try{
    if(action==='retry'){if(pending)await sendOrder();return;}
