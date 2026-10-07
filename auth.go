@@ -27,24 +27,43 @@ func tokenHash(token string) string {
 	h := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(h[:])
 }
+
+// Attempts count per account and address, so guesses from elsewhere cannot lock
+// the owner out; a larger limit per account still slows distributed guessing.
+var loginLimits = []struct {
+	perAddress bool
+	max        int
+}{{true, 15}, {false, 100}}
+
 func (a *App) limitLogin(c echo.Context, scope, email string) error {
-	var attempts int
-	var remaining int
-	err := a.control.QueryRow(c.Request().Context(), `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<=now() THEN 1 ELSE LEAST(login_attempts.attempts+1,16) END,reset_at=CASE WHEN login_attempts.reset_at<=now() THEN now()+interval '15 minutes' ELSE login_attempts.reset_at END RETURNING attempts,GREATEST(1,ceil(extract(epoch FROM (reset_at-now()))))::int`, a.loginKey(scope, email)).Scan(&attempts, &remaining)
-	if err != nil {
-		return err
-	}
-	if attempts > 15 {
-		c.Response().Header().Set("Retry-After", strconv.Itoa(remaining))
-		return echo.NewHTTPError(429, fmt.Sprintf("Muitas tentativas para este acesso. Tente novamente em %d min e %d s.", remaining/60, remaining%60))
+	for _, limit := range loginLimits {
+		address := ""
+		if limit.perAddress {
+			address = c.RealIP()
+		}
+		var attempts, remaining int
+		err := a.control.QueryRow(c.Request().Context(), `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<=now() THEN 1 ELSE LEAST(login_attempts.attempts+1,$2) END,reset_at=CASE WHEN login_attempts.reset_at<=now() THEN now()+interval '15 minutes' ELSE login_attempts.reset_at END RETURNING attempts,GREATEST(1,ceil(extract(epoch FROM (reset_at-now()))))::int`, a.loginKey(scope, email, address), limit.max+1).Scan(&attempts, &remaining)
+		if err != nil {
+			return err
+		}
+		if attempts > limit.max {
+			c.Response().Header().Set("Retry-After", strconv.Itoa(remaining))
+			return echo.NewHTTPError(429, fmt.Sprintf("Muitas tentativas para este acesso. Tente novamente em %d min e %d s.", remaining/60, remaining%60))
+		}
 	}
 	return nil
 }
-func (a *App) loginKey(scope, email string) string {
-	return tokenHash(a.cfg.Secret + scope + strings.ToLower(strings.TrimSpace(email)))
+
+// loginKey identifies an account, or an account from one address.
+func (a *App) loginKey(scope, email, address string) string {
+	key := a.cfg.Secret + scope + strings.ToLower(strings.TrimSpace(email))
+	if address != "" {
+		key += "\x00" + address
+	}
+	return tokenHash(key)
 }
 func (a *App) resetLoginLimit(c echo.Context, scope, email string) error {
-	_, err := a.control.Exec(c.Request().Context(), "DELETE FROM login_attempts WHERE key=$1", a.loginKey(scope, email))
+	_, err := a.control.Exec(c.Request().Context(), "DELETE FROM login_attempts WHERE key=ANY($1)", []string{a.loginKey(scope, email, c.RealIP()), a.loginKey(scope, email, "")})
 	return err
 }
 func (a *App) clientIP(r *http.Request) string {

@@ -16,7 +16,7 @@ Atualizado em 06/10/2026. Esta versão permite atendimento pelo QR/NFC, pedido c
 
 `/admin` é somente para os administradores da plataforma Mezô. O responsável do restaurante, o garçom e a cozinha entram pelo link do restaurante. Na página inicial, informe o identificador do restaurante no formulário “Acesso do restaurante”. A cozinha é direcionada à sua área após o login.
 
-Depois de muitas tentativas, a página exibe o tempo restante do bloqueio e pausa o botão até a liberação. Login bem-sucedido zera o contador da conta; o bloqueio de tentativas incorretas continua ativo entre instâncias.
+Depois de muitas tentativas, a página exibe o tempo restante do bloqueio e pausa o botão até a liberação. Login bem-sucedido zera o contador da conta; o bloqueio de tentativas incorretas continua ativo entre instâncias. O bloqueio vale por conta e endereço: tentativas vindas de outra rede não travam quem está no restaurante, salvo um volume muito alto (100 tentativas em 15 minutos para a mesma conta).
 
 ## Regras da operação
 

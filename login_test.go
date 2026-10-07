@@ -91,7 +91,8 @@ func TestAdminLoginFeedbackAndCooldown(t *testing.T) {
 	if _, err = a.control.Exec(ctx, "INSERT INTO administrators(email,password_hash) VALUES($1,$2)", email, hash); err != nil {
 		t.Fatal(err)
 	}
-	key := a.loginKey("admin:", email)
+	key := a.loginKey("admin:", email, "")
+	keys := []string{key}
 	defer func() {
 		clean, stop := context.WithTimeout(context.Background(), 10*time.Second)
 		defer stop()
@@ -100,17 +101,23 @@ func TestAdminLoginFeedbackAndCooldown(t *testing.T) {
 				t.Error(e)
 			}
 		}
-		if _, e := a.control.Exec(clean, "DELETE FROM login_attempts WHERE key=$1", key); e != nil {
+		if _, e := a.control.Exec(clean, "DELETE FROM login_attempts WHERE key=ANY($1)", keys); e != nil {
 			t.Error(e)
 		}
 	}()
 	router := a.router()
 	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	n := 0
+	fixed := ""
 	request := func(path, pass string, htmx bool, origin string) *httptest.ResponseRecorder {
 		n++
 		r := httptest.NewRequest("POST", path, strings.NewReader(url.Values{"email": {email}, "password": {pass}}.Encode()))
-		r.RemoteAddr = "192.0.2." + strconv.Itoa(n) + ":4321"
+		address := "192.0.2." + strconv.Itoa(n)
+		if fixed != "" {
+			address = fixed
+		}
+		keys = append(keys, a.loginKey("admin:", email, address))
+		r.RemoteAddr = address + ":4321"
 		r.Header.Set("Origin", origin)
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		if htmx {
@@ -165,7 +172,8 @@ func TestAdminLoginFeedbackAndCooldown(t *testing.T) {
 	if err = a.control.QueryRow(ctx, "SELECT count(*) FROM login_attempts WHERE key=$1", key).Scan(&count); err != nil || count != 0 {
 		t.Fatal("logins bem-sucedidos consumiram o limite", err)
 	}
-	if _, err = a.control.Exec(ctx, "INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,15,now()+interval '61 seconds')", key); err != nil {
+	// The account-wide limit blocks guesses spread over many addresses.
+	if _, err = a.control.Exec(ctx, "INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,100,now()+interval '61 seconds')", key); err != nil {
 		t.Fatal(err)
 	}
 	w = request("/admin/login", password, true, cfg.Origin)
@@ -190,6 +198,16 @@ func TestAdminLoginFeedbackAndCooldown(t *testing.T) {
 	}
 	w = request("/admin/login", password, true, cfg.Origin)
 	expect(w, 200)
+	if !published {
+		// Guesses from one address do not lock the account owner out elsewhere.
+		fixed = "198.51.100.7"
+		if _, err = a.control.Exec(ctx, "INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,15,now()+interval '61 seconds')", a.loginKey("admin:", email, fixed)); err != nil {
+			t.Fatal(err)
+		}
+		expect(request("/admin/login", password, true, cfg.Origin), 429)
+		fixed = ""
+		expect(request("/admin/login", password, true, cfg.Origin), 200)
+	}
 	w = request("/admin/login", "incorrect-password", false, cfg.Origin)
 	expect(w, 401)
 	if !strings.Contains(w.Body.String(), "id=\"admin-login\"") || !strings.Contains(w.Body.String(), "Sou da equipe de um restaurante") {
