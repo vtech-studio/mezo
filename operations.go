@@ -52,12 +52,19 @@ func lockOperator(ctx context.Context, tx pgx.Tx, id, expectedRole string) error
 
 func readOrders(ctx context.Context, p *pgxpool.Pool, session string, kitchen bool) ([]Order, error) {
 	// Every active ticket remains visible, even with a long order history.
-	rows, err := p.Query(ctx, `WITH visible AS (SELECT * FROM orders WHERE status IN ('queued','preparing','ready') UNION ALL (SELECT * FROM orders WHERE status IN ('delivered','cancelled') ORDER BY updated_at DESC LIMIT 100))
+	visible := `SELECT * FROM orders WHERE status IN ('queued','preparing','ready') UNION ALL (SELECT * FROM orders WHERE status IN ('delivered','cancelled') ORDER BY updated_at DESC LIMIT 100)`
+	args := []any{}
+	if session != "" {
+		// A table keeps its whole history, however busy the rest of the restaurant is.
+		visible = `SELECT * FROM orders WHERE session_id=$1`
+		args = append(args, session)
+	}
+	rows, err := p.Query(ctx, `WITH visible AS (`+visible+`)
  SELECT o.id,o.session_id,s.table_number,o.status,CASE WHEN o.customer_session_id IS NULL THEN 'waiter' ELSE 'customer' END,o.note,COALESCE(u.name,''),COALESCE(o.assigned_to,''),
  (extract(epoch FROM o.created_at)*1000)::bigint,(extract(epoch FROM o.updated_at)*1000)::bigint,
- (SELECT jsonb_agg(jsonb_build_object('id',i.id,'name',i.name,'qty',i.qty,'price',i.price,'note',i.note) ORDER BY i.id) FROM order_items i WHERE i.order_id=o.id)
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('id',i.id,'name',i.name,'qty',i.qty,'price',i.price,'note',i.note) ORDER BY i.id) FROM order_items i WHERE i.order_id=o.id),'[]')
  FROM visible o JOIN table_sessions s ON s.id=o.session_id LEFT JOIN staff u ON u.id=o.assigned_to
- WHERE ($1='' OR o.session_id=$1) ORDER BY o.created_at`, session)
+ ORDER BY o.created_at`, args...)
 	if err != nil {
 		return nil, err
 	}
