@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -150,7 +151,29 @@ func TestPostgresIsolationAndRestaurantFlow(t *testing.T) {
 	expect(request("POST", "/api/r/"+tb.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1), 401)
 	// New restaurants start with closed tables: the printed QR reaches no bill yet.
 	expect(request("GET", "/r/"+ta.Slug+"/m/"+token, nil, nil, ""), 410)
-	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1), 201)
+	opened := request("POST", "/api/r/"+ta.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1)
+	expect(opened, 201)
+	code := read(opened)["code"].(string)
+	postCode := func(token, code, origin string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/r/"+ta.Slug+"/m/"+token, strings.NewReader(url.Values{"code": {code}}.Encode()))
+		r.Header.Set("Origin", origin)
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, r)
+		return w
+	}
+	// The printed QR alone reaches no bill: the guest also needs the code of the open table.
+	enter := func(token, code string) *http.Cookie {
+		t.Helper()
+		w := request("GET", "/r/"+ta.Slug+"/m/"+token, nil, nil, "")
+		expect(w, 200)
+		if len(w.Result().Cookies()) != 0 || !strings.Contains(w.Body.String(), "Código da mesa") {
+			t.Fatal("a placa abriu a conta sem o código da mesa")
+		}
+		w = postCode(token, code, cfg.Origin)
+		expect(w, 303)
+		return w.Result().Cookies()[0]
+	}
 	pw, err := a.crypt(ta.DBSecret, false)
 	if err != nil {
 		t.Fatal(err)
@@ -166,11 +189,12 @@ func TestPostgresIsolationAndRestaurantFlow(t *testing.T) {
 			t.Fatalf("tenant A conseguiu conectar ao banco %s", db)
 		}
 	}
-	w := request("GET", "/r/"+ta.Slug+"/m/"+token, nil, nil, "")
+	customer := enter(token, code)
+	w := request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, customer, "")
 	expect(w, 200)
-	customer := w.Result().Cookies()[0]
-	w = request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, customer, "")
-	expect(w, 200)
+	if read(w)["table"].(map[string]any)["code"] != code {
+		t.Fatal("o cliente não recebeu o código para compartilhar com a mesa")
+	}
 	customerCSRF := read(w)["csrf"].(string)
 	expect(request("GET", "/api/r/"+tb.Slug+"/bootstrap", nil, customer, ""), 401)
 	expect(request("POST", "/api/r/"+ta.Slug+"/calls", map[string]any{"reason": "help", "note": ""}, customer, ""), 403)
@@ -269,15 +293,81 @@ func TestPostgresIsolationAndRestaurantFlow(t *testing.T) {
 	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/close", map[string]any{"confirmed": false}, staff1, csrf1), 400)
 	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/close", map[string]any{"confirmed": true, "method": "pix", "expectedTotal": 2468}, staff1, csrf1), 200)
 	expect(request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, customer, ""), 410)
-	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1), 201)
+	reopened := request("POST", "/api/r/"+ta.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1)
+	expect(reopened, 201)
 	expect(request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, customer, ""), 410)
+	// A link saved by the previous guest no longer reaches the new bill without the new code.
 	w = request("GET", "/r/"+ta.Slug+"/m/"+token, nil, customer, "")
 	expect(w, 200)
-	newCustomer := w.Result().Cookies()[0]
+	if len(w.Result().Cookies()) != 0 {
+		t.Fatal("o link antigo abriu a conta nova sem o código")
+	}
+	newCustomer := enter(token, read(reopened)["code"].(string))
 	w = request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, newCustomer, "")
 	expect(w, 200)
 	if read(w)["totals"].(map[string]any)["total"] != float64(0) {
 		t.Fatal("consumo da conta anterior vazou para a nova")
+	}
+	// Wrong codes, the per-table limit, renewal and tables opened before codes existed.
+	opened = request("POST", "/api/r/"+ta.Slug+"/tables/2/open", map[string]any{}, staff1, csrf1)
+	expect(opened, 201)
+	code2 := read(opened)["code"].(string)
+	var token2 string
+	tablePool, tableRelease, err := a.lease(ctx, ta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = tablePool.QueryRow(ctx, "SELECT qr_token FROM dining_tables WHERE number=2").Scan(&token2)
+	tableRelease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staffTables := read(request("GET", "/api/r/"+ta.Slug+"/bootstrap?role=staff", nil, staff1, ""))["tables"].([]any)
+	if staffTables[1].(map[string]any)["code"] != code2 {
+		t.Fatal("a equipe não vê o código da mesa aberta")
+	}
+	wrong := "0000"
+	if code2 == wrong {
+		wrong = "0001"
+	}
+	w = postCode(token2, wrong, cfg.Origin)
+	expect(w, 401)
+	if len(w.Result().Cookies()) != 0 || !strings.Contains(w.Body.String(), "Código incorreto") {
+		t.Fatal("código errado abriu a conta ou não explicou o erro")
+	}
+	expect(postCode(token2, code2, "https://other.example"), 403)
+	for i := 1; i < tableCodeFailures; i++ {
+		expect(postCode(token2, wrong, cfg.Origin), 401)
+	}
+	w = postCode(token2, code2, cfg.Origin)
+	expect(w, 429)
+	if w.Header().Get("Retry-After") == "" || len(w.Result().Cookies()) != 0 {
+		t.Fatal("a mesa continuou aceitando códigos depois de muitas tentativas")
+	}
+	renewed := request("POST", "/api/r/"+ta.Slug+"/tables/2/code", map[string]any{}, staff1, csrf1)
+	expect(renewed, 200)
+	code3 := read(renewed)["code"].(string)
+	if code3 != code2 {
+		expect(postCode(token2, code2, cfg.Origin), 401)
+	}
+	guest := enter(token2, code3)
+	if read(request("GET", "/api/r/"+ta.Slug+"/bootstrap", nil, guest, ""))["table"].(map[string]any)["code"] != code3 {
+		t.Fatal("o código renovado não chegou ao cliente")
+	}
+	expect(request("POST", "/api/r/"+tb.Slug+"/tables/2/code", map[string]any{}, staff1, csrf1), 401)
+	tablePool, tableRelease, err = a.lease(ctx, ta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tablePool.Exec(ctx, "UPDATE table_sessions SET code=NULL WHERE table_number=2 AND closed_at IS NULL")
+	tableRelease()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = request("GET", "/r/"+ta.Slug+"/m/"+token2, nil, nil, "")
+	expect(w, 200)
+	if len(w.Result().Cookies()) != 1 {
+		t.Fatal("mesa aberta antes dos códigos deixou de aceitar a placa")
 	}
 	t.Log(fmt.Sprintf("isolamento PostgreSQL e HTTP, autenticação, CSRF, concorrência, consumo, persistência e reabertura validados (%s)", suffix))
 }

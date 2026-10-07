@@ -256,14 +256,29 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	expect(request("GET", base+"/revision?role=staff", nil, nil, ""), 401)
 	expect(request("GET", "/api/r/"+other.Slug+"/revision?role=staff", nil, waiter.cookie, ""), 401)
 	before := revision(waiter.cookie, "staff")
-	expect(request("POST", base+"/tables/1/open", map[string]any{}, waiter.cookie, waiter.csrf), 201)
+	opened := request("POST", base+"/tables/1/open", map[string]any{}, waiter.cookie, waiter.csrf)
+	expect(opened, 201)
 	if revision(chefs[0].cookie, "staff") <= before {
 		t.Fatal("abrir a mesa não avançou a revisão do restaurante")
 	}
-	w := request("GET", "/r/"+tenant.Slug+"/m/"+token, nil, nil, "")
-	expect(w, 200)
-	customer := w.Result().Cookies()[0]
-	w = request("GET", base+"/bootstrap", nil, customer, "")
+	// Guests enter with the printed QR plus the code given when the table opened.
+	enter := func(code string) *http.Cookie {
+		t.Helper()
+		w := request("GET", "/r/"+tenant.Slug+"/m/"+token, nil, nil, "")
+		expect(w, 200)
+		if len(w.Result().Cookies()) != 0 {
+			t.Fatal("a placa abriu a conta sem o código da mesa")
+		}
+		r := httptest.NewRequest("POST", "/r/"+tenant.Slug+"/m/"+token, strings.NewReader(url.Values{"code": {code}}.Encode()))
+		r.Header.Set("Origin", cfg.Origin)
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w = httptest.NewRecorder()
+		serve(w, r)
+		expect(w, 303)
+		return w.Result().Cookies()[0]
+	}
+	customer := enter(read(opened)["code"].(string))
+	w := request("GET", base+"/bootstrap", nil, customer, "")
 	expect(w, 200)
 	customerCSRF := read(w)["csrf"].(string)
 	if read(w)["revision"] != revision(customer, "customer") {
@@ -399,7 +414,8 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	}
 	expect(request("GET", base+"/receipts?date=2026-99-99", nil, manager.cookie, ""), 400)
 	expect(request("GET", base+"/bootstrap", nil, customer, ""), 410)
-	expect(request("POST", base+"/tables/1/open", map[string]any{}, waiter.cookie, waiter.csrf), 201)
+	reopened := request("POST", base+"/tables/1/open", map[string]any{}, waiter.cookie, waiter.csrf)
+	expect(reopened, 201)
 	w = request("GET", base+"/tables/1/bill", nil, waiter.cookie, "")
 	expect(w, 200)
 	if read(w)["total"] != float64(0) {
@@ -448,9 +464,7 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	// Customer confirmation writes the order, kitchen ticket and bill atomically.
 	customerPayload := map[string]any{"key": randomID(), "note": "Pedido confirmado pelo cliente", "expectedSubtotal": 6400, "items": []map[string]any{{"menuId": "dish", "qty": 2, "note": "Sem cebola"}}}
 	expect(request("POST", base+"/customer-orders", customerPayload, customer, customerCSRF), 410)
-	w = request("GET", "/r/"+tenant.Slug+"/m/"+token, nil, nil, "")
-	expect(w, 200)
-	newCustomer := w.Result().Cookies()[0]
+	newCustomer := enter(read(reopened)["code"].(string))
 	w = request("GET", base+"/bootstrap", nil, newCustomer, "")
 	expect(w, 200)
 	newCustomerData := read(w)

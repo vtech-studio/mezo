@@ -102,10 +102,12 @@ func (a *App) bootstrap(c echo.Context) error {
 	if kind == "customer" {
 		var n, seats int
 		var service bool
-		if err = x.Pool.QueryRow(ctx, "SELECT d.number,d.seats,s.service FROM table_sessions s JOIN dining_tables d ON d.number=s.table_number WHERE s.id=$1", x.Session.Subject).Scan(&n, &seats, &service); err != nil {
+		var code string
+		if err = x.Pool.QueryRow(ctx, "SELECT d.number,d.seats,s.service,COALESCE(s.code,'') FROM table_sessions s JOIN dining_tables d ON d.number=s.table_number WHERE s.id=$1", x.Session.Subject).Scan(&n, &seats, &service, &code); err != nil {
 			return err
 		}
-		out["table"] = map[string]any{"number": n, "seats": seats}
+		// Guests already at the table can share the code with the rest of the group.
+		out["table"] = map[string]any{"number": n, "seats": seats, "code": code}
 		out["service"] = service
 		out["sessionId"] = x.Session.Subject
 		rows, err = x.Pool.Query(ctx, "SELECT id,menu_id,name,price,qty FROM consumption WHERE session_id=$1 AND NOT cancelled ORDER BY created_at", x.Session.Subject)
@@ -136,20 +138,20 @@ func (a *App) bootstrap(c echo.Context) error {
 		out["items"] = items
 		out["totals"] = map[string]int{"subtotal": subtotal, "service": fee, "total": subtotal + fee}
 	} else {
-		rows, err = x.Pool.Query(ctx, "SELECT d.number,d.seats,COALESCE(s.id,''),COALESCE(sum(v.price::bigint*v.qty),0) FROM dining_tables d LEFT JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL LEFT JOIN consumption v ON v.session_id=s.id AND NOT v.cancelled GROUP BY d.number,d.seats,s.id ORDER BY d.number")
+		rows, err = x.Pool.Query(ctx, "SELECT d.number,d.seats,COALESCE(s.id,''),COALESCE(s.code,''),COALESCE(sum(v.price::bigint*v.qty),0) FROM dining_tables d LEFT JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL LEFT JOIN consumption v ON v.session_id=s.id AND NOT v.cancelled GROUP BY d.number,d.seats,s.id,s.code ORDER BY d.number")
 		if err != nil {
 			return err
 		}
 		tables := []map[string]any{}
 		for rows.Next() {
 			var n, seats int
-			var session string
+			var session, code string
 			var subtotal int64
-			if err = rows.Scan(&n, &seats, &session, &subtotal); err != nil {
+			if err = rows.Scan(&n, &seats, &session, &code, &subtotal); err != nil {
 				rows.Close()
 				return err
 			}
-			tables = append(tables, map[string]any{"number": n, "seats": seats, "sessionId": session, "subtotal": subtotal})
+			tables = append(tables, map[string]any{"number": n, "seats": seats, "sessionId": session, "code": code, "subtotal": subtotal})
 		}
 		err = rows.Err()
 		rows.Close()
@@ -438,7 +440,8 @@ func (a *App) openTable(c echo.Context) error {
 	if err = lockOperator(ctx, tx, x.Session.Subject, x.Role); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, "INSERT INTO table_sessions(id,table_number) VALUES($1,$2)", randomID(), n)
+	code := newTableCode()
+	_, err = tx.Exec(ctx, "INSERT INTO table_sessions(id,table_number,code) VALUES($1,$2,$3)", randomID(), n, code)
 	if err != nil {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && (pe.Code == "23505" || pe.Code == "23503") {
@@ -450,5 +453,5 @@ func (a *App) openTable(c echo.Context) error {
 		return err
 	}
 	a.notify(c.Request().Context(), x.Tenant.ID, "")
-	return c.JSON(201, map[string]bool{"ok": true})
+	return c.JSON(201, map[string]any{"ok": true, "code": code})
 }

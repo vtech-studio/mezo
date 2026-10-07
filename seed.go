@@ -57,7 +57,7 @@ func (a *App) seedDemo(ctx context.Context) error {
 		}
 	}
 	// Development fixture only: consumption is still read and calculated in PostgreSQL.
-	if _, err = tx.Exec(ctx, "INSERT INTO table_sessions(id,table_number) VALUES($1,8)", randomID()); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO table_sessions(id,table_number,code) VALUES($1,8,$2)", randomID(), newTableCode()); err != nil {
 		return err
 	}
 	for _, line := range []struct {
