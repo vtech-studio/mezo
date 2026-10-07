@@ -219,17 +219,11 @@ func (a *App) staffPage(c echo.Context) error {
 	return c.Redirect(303, "/r/"+c.Param("slug")+"/garcom")
 }
 func (a *App) appPage(c echo.Context) error {
-	b, err := assets.ReadFile("dist/index.html")
-	if err != nil {
-		return err
-	}
-	html := strings.Replace(string(b), "<head>", "<head><meta name=\"mezo-runtime\" content=\"server\">", 1)
 	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
 	if err != nil {
 		return err
 	}
-	html = strings.ReplaceAll(html, "Casa do Sol", template.HTMLEscapeString(t.Name))
-	return c.HTML(200, html)
+	return c.HTML(200, strings.ReplaceAll(customerPage, "Casa do Sol", template.HTMLEscapeString(t.Name)))
 }
 func (a *App) staffLogin(c echo.Context) error {
 	if err := a.origin(c); err != nil {
