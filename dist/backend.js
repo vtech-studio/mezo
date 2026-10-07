@@ -15,7 +15,7 @@ async function refreshLive(){
   liveOrders=data.orders||[];liveSessionId=data.sessionId||'';
   liveTransport=data.realtime||'events';
   liveRevision=data.revision??null;liveLoadedAt=Date.now();
-  if(data.table){tableNumber=data.table.number;tableSeats=data.table.seats;receiptItems=data.items;liveTotals=data.totals;}
+  if(data.table){tableNumber=data.table.number;tableSeats=data.table.seats;tableCode=data.table.code||'';receiptItems=data.items;liveTotals=data.totals;}
   document.querySelector('.restaurant>span:last-child').innerHTML=`${escapeHTML(restaurantName)}<small>À SUA MESA</small>`;
   document.querySelector('.restaurant').setAttribute('aria-label',`${restaurantName}, início`);
   document.title=`Mezô · ${restaurantName}`;

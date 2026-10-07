@@ -64,7 +64,7 @@
  function render(){
   if(!data)return;navigation();
   if(route==='mesas'&&view==='waiter'){
-   content.innerHTML=`<p class="eyebrow">SALÃO · ${data.tables.length} MESAS</p><h1>Cada mesa<br><em>importa.</em></h1><p class="intro">Acompanhe as contas e ajude o cliente quando precisar.</p>${pending?`<article class="card"><h3>Um envio precisa de confirmação</h3><p class="hint">Mesa ${pending.table}. Confira os pedidos antes de iniciar outro.</p>${button('Retomar envio','resume','','full')}</article>`:''}<div class="table-grid">${data.tables.map(t=>{const calls=data.calls.filter(c=>c.table===t.number&&['pending','progress'].includes(c.status));return `<button class="table-button ${calls.length?'called':''}" data-action="table" data-id="${t.number}"><span class="badge ${calls.length?'queued':''}">${calls.length?'Chamado':t.sessionId?'Aberta':'Livre'}</span><strong>${String(t.number).padStart(2,'0')}</strong><small>${t.sessionId?money(t.subtotal)+' · consumo':'Pronta para receber'}</small></button>`;}).join('')}</div>`;return;
+   content.innerHTML=`<p class="eyebrow">SALÃO · ${data.tables.length} MESAS</p><h1>Cada mesa<br><em>importa.</em></h1><p class="intro">Acompanhe as contas e ajude o cliente quando precisar.</p>${pending?`<article class="card"><h3>Um envio precisa de confirmação</h3><p class="hint">Mesa ${pending.table}. Confira os pedidos antes de iniciar outro.</p>${button('Retomar envio','resume','','full')}</article>`:''}<div class="table-grid">${data.tables.map(t=>{const calls=data.calls.filter(c=>c.table===t.number&&['pending','progress'].includes(c.status));return `<button class="table-button ${calls.length?'called':''}" data-action="table" data-id="${t.number}"><span class="badge ${calls.length?'queued':''}">${calls.length?'Chamado':t.sessionId?'Aberta':'Livre'}</span><strong>${String(t.number).padStart(2,'0')}</strong><small>${t.sessionId?money(t.subtotal)+(t.code?' · código '+esc(t.code):' · consumo'):'Pronta para receber'}</small></button>`;}).join('')}</div>`;return;
   }
   if(route==='chamados'&&view==='waiter'){
    const active=data.calls.filter(c=>['pending','progress'].includes(c.status)).sort((a,b)=>a.created-b.created);
@@ -81,7 +81,7 @@
   const t=data.tables.find(t=>t.number===number);if(!t)return;
   if(!t.sessionId){open(`Mesa ${String(number).padStart(2,'0')}`,`<p class="drawer-intro">Abra uma conta nova para receber os clientes.</p>${button('Abrir mesa','open',number,'full')}`);return;}
   open(`Mesa ${String(number).padStart(2,'0')}`,`<p class="drawer-intro">Carregando a conta…</p>`);
-  try{const bill=await api(`/tables/${number}/bill`);const calls=data.calls.filter(c=>c.table===number&&c.status==='progress'&&c.assignedId===data.staff.id);open(`Mesa ${String(number).padStart(2,'0')}`,`<p class="eyebrow">CONTA ABERTA</p>${calls.map(c=>`<article class="table-call"><strong>${reasons[c.reason]}</strong>${c.note?`<p class="note">${esc(c.note)}</p>`:''}${button('Concluir atendimento ✓','complete',c.id,'secondary full')}</article>`).join('')}${bill.items.length?bill.items.map(i=>`<div class="summary-line"><span>${i.qty}× ${esc(i.name)}</span><strong>${money(i.price*i.qty)}</strong></div>`).join(''):'<p class="hint">Nenhum consumo registrado.</p>'}<div class="total"><span>Subtotal</span><span>${money(bill.subtotal)}</span></div><div class="total"><span>Serviço opcional</span><span>${money(bill.service)}</span></div><div class="total grand"><span>Total</span><span>${money(bill.total)}</span></div><div class="actions">${button('Adicionar pedido pelo cliente →','new-order',number)}${button('Encerrar conta','settle',number,'secondary')}</div><p class="hint">Pedidos confirmados entram na conta ao serem enviados. Cancelamentos são feitos pelo responsável.</p>`);}catch(e){error(e.message);}
+  try{const bill=await api(`/tables/${number}/bill`);const calls=data.calls.filter(c=>c.table===number&&c.status==='progress'&&c.assignedId===data.staff.id);open(`Mesa ${String(number).padStart(2,'0')}`,`<p class="eyebrow">CONTA ABERTA</p><div class="total grand"><span>Código da mesa</span><span>${t.code?esc(t.code):'—'}</span></div><p class="hint">Informe aos clientes ao recebê-los; quem já entrou também vê o código no celular.</p>${button(t.code?'Gerar novo código':'Gerar código','code',number,'secondary full')}${calls.map(c=>`<article class="table-call"><strong>${reasons[c.reason]}</strong>${c.note?`<p class="note">${esc(c.note)}</p>`:''}${button('Concluir atendimento ✓','complete',c.id,'secondary full')}</article>`).join('')}${bill.items.length?bill.items.map(i=>`<div class="summary-line"><span>${i.qty}× ${esc(i.name)}</span><strong>${money(i.price*i.qty)}</strong></div>`).join(''):'<p class="hint">Nenhum consumo registrado.</p>'}<div class="total"><span>Subtotal</span><span>${money(bill.subtotal)}</span></div><div class="total"><span>Serviço opcional</span><span>${money(bill.service)}</span></div><div class="total grand"><span>Total</span><span>${money(bill.total)}</span></div><div class="actions">${button('Adicionar pedido pelo cliente →','new-order',number)}${button('Encerrar conta','settle',number,'secondary')}</div><p class="hint">Pedidos confirmados entram na conta ao serem enviados. Cancelamentos são feitos pelo responsável.</p>`);}catch(e){error(e.message);}
  }
  function orderForm(number){
   if(pending){resume();return;}
@@ -115,12 +115,14 @@
    }
    if(action==='refresh'){drawer.close();await refresh();return;}
    if(action==='logout'){await api('/logout',{});drawer.close();pending=null;showLogin();return;}
-   if(action==='open')await api(`/tables/${id}/open`,{});
+   let opened=null;
+   if(action==='open')opened=await api(`/tables/${id}/open`,{});
+   else if(action==='code')opened=await api(`/tables/${id}/code`,{});
    else if(['accept','complete','release'].includes(action))await api(`/calls/${id}/${action}`,{});
    else if(['start','ready','deliver'].includes(action))await api(`/orders/${id}/${action}`,{});
    else return;
    const calledTable=action==='accept'?data.calls.find(c=>c.id===id)?.table:null;
-   if(drawer.open)drawer.close();notify(action==='ready'?'O salão já pode servir.':'Atualizado.');
+   if(drawer.open)drawer.close();notify(opened?.code?`Mesa ${String(id).padStart(2,'0')} · código ${opened.code}. Informe aos clientes.`:action==='ready'?'O salão já pode servir.':'Atualizado.');
    await refresh();
    if(calledTable){busy=false;await table(calledTable);}
   }catch(e){if(drawer.open)error(e.message);else notify(e.message);await refresh();}finally{busy=false;if(b.isConnected)b.disabled=!online;render();}

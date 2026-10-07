@@ -213,9 +213,10 @@ func (a *App) enterTable(c echo.Context) error {
 	}
 	defer release()
 	var id string
-	err = p.QueryRow(c.Request().Context(), "SELECT s.id FROM dining_tables d JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL WHERE d.qr_token=$1", c.Param("token")).Scan(&id)
+	var code *string // tables opened before codes existed have none
+	err = p.QueryRow(c.Request().Context(), "SELECT s.id,s.code FROM dining_tables d JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL WHERE d.qr_token=$1", c.Param("token")).Scan(&id, &code)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return c.HTML(410, "<html lang='pt-BR'><meta name='viewport' content='width=device-width'><link rel='stylesheet' href='/admin.css'><main class='portal'><h1>Mesa indisponível</h1><p>Confira a placa ou peça à equipe para abrir a mesa.</p></main></html>")
+		return tableUnavailable(c)
 	}
 	if err != nil {
 		return err
@@ -225,6 +226,9 @@ func (a *App) enterTable(c echo.Context) error {
 		if e == nil && s.Subject == id {
 			return a.appPage(c)
 		}
+	}
+	if code != nil {
+		return a.tableCodePage(c, 200, t.Name, "")
 	}
 	if err = a.newSession(c, "customer", t.ID, id); err != nil {
 		return err

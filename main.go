@@ -65,6 +65,14 @@ func (a *App) router() *echo.Echo {
 			return echo.NewHTTPError(429, "Muitas tentativas. Aguarde 10 segundos antes de entrar novamente.")
 		},
 	})
+	// Guests on the restaurant Wi-Fi share one address; the real limit is per table, in the database.
+	codeLimit := middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Store: middleware.NewRateLimiterMemoryStoreWithConfig(middleware.RateLimiterMemoryStoreConfig{Rate: 1, Burst: 30, ExpiresIn: 5 * time.Minute}),
+		DenyHandler: func(c echo.Context, _ string, _ error) error {
+			c.Response().Header().Set("Retry-After", "5")
+			return echo.NewHTTPError(429, "Muitas tentativas. Aguarde alguns segundos e tente novamente.")
+		},
+	})
 	e.Use(middleware.Recover(), middleware.BodyLimit("32K"))
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -100,6 +108,10 @@ func (a *App) router() *echo.Echo {
 			_ = a.adminLoginProblem(c, code, message)
 			return
 		}
+		if c.Path() == "/r/:slug/m/:token" && c.Request().Method == http.MethodPost {
+			_ = a.tableCodePage(c, code, "", message)
+			return
+		}
 		_ = c.JSON(code, map[string]string{"error": message})
 	}
 	e.GET("/healthz", func(c echo.Context) error {
@@ -115,6 +127,7 @@ func (a *App) router() *echo.Echo {
 	}
 	e.GET("/", a.home)
 	e.GET("/r/:slug/m/:token", a.enterTable)
+	e.POST("/r/:slug/m/:token", a.submitTableCode, codeLimit)
 	e.GET("/r/:slug/equipe", a.staffPage)
 	e.GET("/r/:slug/garcom", a.workstationPage)
 	e.GET("/r/:slug/cozinha", a.workstationPage)
@@ -134,6 +147,7 @@ func (a *App) router() *echo.Echo {
 	e.POST("/api/r/:slug/tables/:number/consumption", a.addConsumption)
 	e.POST("/api/r/:slug/tables/:number/close", a.closeTable)
 	e.POST("/api/r/:slug/tables/:number/open", a.openTable)
+	e.POST("/api/r/:slug/tables/:number/code", a.renewTableCode)
 	e.GET("/api/r/:slug/events", a.events)
 	e.GET("/api/r/:slug/revision", a.revision)
 	e.GET("/admin", a.adminPage)
