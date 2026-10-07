@@ -446,7 +446,7 @@ func (a *App) changeStaffPassword(c echo.Context) error {
 	}
 	// Revoke while the staff row remains locked, so a simultaneous login
 	// cannot establish a session using the previous password.
-	if _, err = a.control.Exec(ctx, "DELETE FROM auth_sessions WHERE tenant_id=$1 AND kind='staff' AND subject=$2", x.Tenant.ID, x.Session.Subject); err != nil {
+	if err = a.revokeStaff(ctx, x.Tenant.ID, x.Session.Subject); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {

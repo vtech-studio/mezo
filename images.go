@@ -24,7 +24,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	_ "golang.org/x/image/webp"
 )
@@ -116,29 +115,6 @@ func validateImage(data []byte) error {
 	}
 	return nil
 }
-func (a *App) mediaAccess(c echo.Context, mutation bool) (Tenant, *pgxpool.Pool, func(), string, error) {
-	if strings.HasPrefix(c.Path(), "/admin/") {
-		s, err := a.session(c, "admin", "", mutation)
-		if err != nil {
-			return Tenant{}, nil, nil, "", err
-		}
-		t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-		if err != nil {
-			return Tenant{}, nil, nil, "", echo.ErrNotFound
-		}
-		p, release, err := a.lease(c.Request().Context(), t)
-		return t, p, release, s.CSRF, err
-	}
-	x, err := a.access(c, "staff", mutation)
-	if err != nil {
-		return Tenant{}, nil, nil, "", err
-	}
-	if x.Role != "manager" {
-		x.Release()
-		return Tenant{}, nil, nil, "", echo.NewHTTPError(403, "Somente o responsável pode alterar as imagens.")
-	}
-	return x.Tenant, x.Pool, x.Release, x.Session.CSRF, nil
-}
 func (a *App) uploadImage(c echo.Context) error {
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, maxImageBytes+64*1024)
 	defer func() {
@@ -150,11 +126,12 @@ func (a *App) uploadImage(c echo.Context) error {
 			_ = c.Request().MultipartForm.RemoveAll()
 		}
 	}()
-	t, p, release, _, err := a.mediaAccess(c, true)
+	h, err := a.houseAccess(c, true)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer h.Release()
+	t, p := h.Tenant, h.Pool
 	if a.cfg.CloudName == "" {
 		return echo.NewHTTPError(503, "O envio de imagens ainda não foi configurado.")
 	}
@@ -225,11 +202,12 @@ func (a *App) uploadImage(c echo.Context) error {
 	return c.HTML(200, "<p class='notice' role='status'>Imagem salva.</p><img class='media-preview' src='"+template.HTMLEscapeString(imageURL)+"' alt='Imagem salva no restaurante'>")
 }
 func (a *App) imagesPage(c echo.Context) error {
-	t, p, release, csrf, err := a.mediaAccess(c, false)
+	h, err := a.houseAccess(c, false)
 	if err != nil {
-		return err
+		return loginRedirect(c, err)
 	}
-	defer release()
+	defer h.Release()
+	t, p, csrf := h.Tenant, h.Pool, h.CSRF
 	var logo string
 	if err = p.QueryRow(c.Request().Context(), "SELECT logo_url FROM restaurant_brand WHERE singleton").Scan(&logo); err != nil {
 		return err
