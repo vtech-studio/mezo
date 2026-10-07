@@ -43,8 +43,33 @@ func (a *App) tableCodeWait(ctx context.Context, tenant, session string) (int, e
 
 // Only wrong codes count, so a large group entering the right one is never blocked.
 func (a *App) tableCodeFailed(ctx context.Context, tenant, session string) error {
-	_, err := a.control.Exec(ctx, `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '1 hour') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<=now() THEN 1 ELSE login_attempts.attempts+1 END,reset_at=CASE WHEN login_attempts.reset_at<=now() THEN now()+interval '1 hour' ELSE login_attempts.reset_at END`, a.tableCodeKey(tenant, session))
+	_, _, err := a.countAttempt(ctx, a.tableCodeKey(tenant, session), tableCodeFailures, "1 hour")
 	return err
+}
+
+var errTableClosed = errors.New("mesa fechada")
+
+// tableAtQR finds the open session behind a printed table QR.
+func (a *App) tableAtQR(c echo.Context) (t Tenant, session string, code *string, err error) {
+	ctx := c.Request().Context()
+	t, err = a.tenant(ctx, c.Param("slug"))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return t, "", nil, echo.ErrNotFound
+	}
+	if err != nil {
+		return t, "", nil, err
+	}
+	p, release, err := a.lease(ctx, t)
+	if err != nil {
+		return t, "", nil, err
+	}
+	defer release()
+	// Tables opened before codes existed have none.
+	err = p.QueryRow(ctx, "SELECT s.id,s.code FROM dining_tables d JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL WHERE d.qr_token=$1", c.Param("token")).Scan(&session, &code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = errTableClosed
+	}
+	return t, session, code, err
 }
 
 func (a *App) tableCodePage(c echo.Context, status int, restaurant, message string) error {
@@ -57,22 +82,8 @@ func (a *App) submitTableCode(c echo.Context) error {
 		return err
 	}
 	ctx := c.Request().Context()
-	t, err := a.tenant(ctx, c.Param("slug"))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return echo.ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	p, release, err := a.lease(ctx, t)
-	if err != nil {
-		return err
-	}
-	defer release()
-	var id string
-	var code *string
-	err = p.QueryRow(ctx, "SELECT s.id,s.code FROM dining_tables d JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL WHERE d.qr_token=$1", c.Param("token")).Scan(&id, &code)
-	if errors.Is(err, pgx.ErrNoRows) {
+	t, id, code, err := a.tableAtQR(c)
+	if errors.Is(err, errTableClosed) {
 		return tableUnavailable(c)
 	}
 	if err != nil {
@@ -113,24 +124,13 @@ func (a *App) renewTableCode(c echo.Context) error {
 		return echo.ErrNotFound
 	}
 	ctx := c.Request().Context()
-	tx, err := x.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if err = lockOperator(ctx, tx, x.Session.Subject, x.Role); err != nil {
-		return err
-	}
 	code := newTableCode()
 	var session string
-	err = tx.QueryRow(ctx, "UPDATE table_sessions SET code=$2 WHERE table_number=$1 AND closed_at IS NULL RETURNING id", n, code).Scan(&session)
+	err = x.Pool.QueryRow(ctx, "UPDATE table_sessions SET code=$2 WHERE table_number=$1 AND closed_at IS NULL RETURNING id", n, code).Scan(&session)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return echo.NewHTTPError(409, "Abra a mesa antes de gerar o código")
 	}
 	if err != nil {
-		return err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
 	if _, err = a.control.Exec(ctx, "DELETE FROM login_attempts WHERE key=$1", a.tableCodeKey(x.Tenant.ID, session)); err != nil {
