@@ -246,13 +246,30 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	}
 	expect(request("GET", base+"/tables/1/bill", nil, chefs[0].cookie, ""), 403)
 	expect(request("GET", "/api/r/"+other.Slug+"/operations?view=kitchen", nil, chefs[0].cookie, ""), 401)
+	// Polling screens read only the restaurant revision while nothing changes.
+	revision := func(cookie *http.Cookie, role string) float64 {
+		t.Helper()
+		w := request("GET", base+"/revision?role="+role, nil, cookie, "")
+		expect(w, 200)
+		return read(w)["revision"].(float64)
+	}
+	expect(request("GET", base+"/revision?role=staff", nil, nil, ""), 401)
+	expect(request("GET", "/api/r/"+other.Slug+"/revision?role=staff", nil, waiter.cookie, ""), 401)
+	before := revision(waiter.cookie, "staff")
 	expect(request("POST", base+"/tables/1/open", map[string]any{}, waiter.cookie, waiter.csrf), 201)
+	if revision(chefs[0].cookie, "staff") <= before {
+		t.Fatal("abrir a mesa não avançou a revisão do restaurante")
+	}
 	w := request("GET", "/r/"+tenant.Slug+"/m/"+token, nil, nil, "")
 	expect(w, 200)
 	customer := w.Result().Cookies()[0]
 	w = request("GET", base+"/bootstrap", nil, customer, "")
 	expect(w, 200)
 	customerCSRF := read(w)["csrf"].(string)
+	if read(w)["revision"] != revision(customer, "customer") {
+		t.Fatal("a revisão do cliente divergiu do estado carregado")
+	}
+	expect(request("GET", base+"/revision?role=staff", nil, customer, ""), 401)
 	expect(request("GET", base+"/operations?view=waiter", nil, customer, ""), 401)
 	payload := map[string]any{"table": 1, "key": randomID(), "note": "Entradas primeiro <script>", "items": []map[string]any{{"menuId": "dish", "qty": 2, "note": "Sem cebola"}}}
 	expect(request("POST", base+"/orders", payload, waiter.cookie, ""), 403)
@@ -317,6 +334,9 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	}
 	w = request("GET", base+"/operations?view=kitchen", nil, chefs[0].cookie, "")
 	expect(w, 200)
+	if read(w)["revision"] != revision(chefs[0].cookie, "staff") {
+		t.Fatal("a cozinha não recebeu a revisão do estado carregado")
+	}
 	if strings.Contains(w.Body.String(), `"price"`) || strings.Contains(w.Body.String(), `"tables"`) || strings.Contains(w.Body.String(), `"calls"`) {
 		t.Fatal("cozinha recebeu dados financeiros ou do salão")
 	}

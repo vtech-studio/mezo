@@ -39,7 +39,7 @@ func (a *App) bootstrap(c echo.Context) error {
 		return echo.NewHTTPError(403, "Use o acesso da cozinha")
 	}
 	ctx := c.Request().Context()
-	out := map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name, "slug": x.Tenant.Slug}, "csrf": x.Session.CSRF, "role": kind, "paymentsEnabled": false}
+	out := map[string]any{"restaurant": map[string]string{"name": x.Tenant.Name, "slug": x.Tenant.Slug}, "csrf": x.Session.CSRF, "role": kind, "paymentsEnabled": false, "revision": x.Tenant.Revision}
 	out["realtime"] = "events"
 	if a.cfg.Serverless {
 		out["realtime"] = "poll"
@@ -216,7 +216,7 @@ func (a *App) createCall(c echo.Context) error {
 	if err = tx.Commit(c.Request().Context()); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, x.Session.Subject)
+	a.notify(c.Request().Context(), x.Tenant.ID, x.Session.Subject)
 	return c.JSON(200, map[string]any{"id": id, "duplicate": duplicate})
 }
 func (a *App) updateCall(c echo.Context) error {
@@ -266,7 +266,7 @@ func (a *App) updateCall(c echo.Context) error {
 	if err = tx.Commit(c.Request().Context()); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, sessionID)
+	a.notify(c.Request().Context(), x.Tenant.ID, sessionID)
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 func (a *App) service(c echo.Context) error {
@@ -288,7 +288,7 @@ func (a *App) service(c echo.Context) error {
 	if tag.RowsAffected() != 1 {
 		return echo.NewHTTPError(410, "Conta encerrada")
 	}
-	a.hub.publish(x.Tenant.ID, x.Session.Subject)
+	a.notify(c.Request().Context(), x.Tenant.ID, x.Session.Subject)
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 func (a *App) addConsumption(c echo.Context) error {
@@ -336,7 +336,7 @@ func (a *App) addConsumption(c echo.Context) error {
 	if err = tx.Commit(c.Request().Context()); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, session)
+	a.notify(c.Request().Context(), x.Tenant.ID, session)
 	return c.JSON(201, map[string]bool{"ok": true})
 }
 func (a *App) closeTable(c echo.Context) error {
@@ -416,7 +416,7 @@ func (a *App) closeTable(c echo.Context) error {
 	if err = tx.Commit(c.Request().Context()); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, session)
+	a.notify(c.Request().Context(), x.Tenant.ID, session)
 	return c.JSON(200, map[string]bool{"ok": true})
 }
 func (a *App) openTable(c echo.Context) error {
@@ -449,6 +449,6 @@ func (a *App) openTable(c echo.Context) error {
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	a.hub.publish(x.Tenant.ID, "")
+	a.notify(c.Request().Context(), x.Tenant.ID, "")
 	return c.JSON(201, map[string]bool{"ok": true})
 }

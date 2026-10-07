@@ -8,7 +8,7 @@
  const labels={queued:'Na fila',preparing:'Em preparo',ready:'Pronto',delivered:'Entregue',cancelled:'Cancelado'};
  const reasons={help:'Preciso de ajuda',order:'Ajuda para pedir',water:'Pedir água',bill:'Pedir a conta'};
  let data=null,csrf='',busy=false,refreshing=false,online=false,timer=null,toastTimer=null,filter='active',route=location.hash.slice(1)|| (view==='kitchen'?'pedidos':'chamados');
- let pending=null;
+ let pending=null,revision=null,loadedAt=0;
  const pendingKey=()=>`mezo-pending:${slug}:${data?.staff.id}`;
  const savePending=()=>{try{if(pending)sessionStorage.setItem(pendingKey(),JSON.stringify(pending));else sessionStorage.removeItem(pendingKey());}catch{}};
  const notify=message=>{const t=document.getElementById('toast');t.textContent=message;t.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.hidden=true,4500);};
@@ -27,11 +27,22 @@
   if(drawer.open)drawer.close();
   content.innerHTML=`<section class="login"><p class="eyebrow">${view==='kitchen'?'COZINHA':'GARÇOM'} · ACESSO DA EQUIPE</p><h1>${view==='kitchen'?'Cada prato,<br><em>no seu tempo.</em>':'Bom atendimento<br><em>começa aqui.</em>'}</h1><p class="intro">Entre com o acesso fornecido pelo restaurante.</p><form id="login-form"><label for="email">E-mail</label><input id="email" name="email" type="email" autocomplete="username" required maxlength="200"><label for="password">Senha</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="72"><p class="error" id="form-error" role="alert">${esc(message)}</p><button class="button full">Entrar →</button></form><p class="hint">Cada pessoa deve usar seu próprio acesso.</p><a class="hint" href="/r/${esc(slug)}/${view==='kitchen'?'garcom':'cozinha'}">Acesso ${view==='kitchen'?'do garçom':'da cozinha'} →</a></section>`;
  }
+ function markUpdated(){
+  connection.textContent=`${data.staff.name} · atualizado ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;connection.className='connection';document.getElementById('account-button').hidden=false;
+ }
+ // Between full reloads, a small revision check tells whether anything changed in the restaurant.
+ async function poll(){
+  if(document.hidden||busy||refreshing||!(data||online))return;
+  if(data&&online&&revision!==null&&Date.now()-loadedAt<60000){
+   try{const result=await api('/revision?role=staff');if(result.revision===revision){markUpdated();return;}}catch{}
+  }
+  await refresh();
+ }
  async function refresh(){
   if(refreshing)return;refreshing=true;
   try{
-   const result=await api(`/operations?view=${view}`);data=result;csrf=result.csrf;online=true;
-   connection.textContent=`${result.staff.name} · atualizado ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`;connection.className='connection';document.getElementById('account-button').hidden=false;
+   const result=await api(`/operations?view=${view}`);data=result;csrf=result.csrf;online=true;revision=result.revision??null;loadedAt=Date.now();
+   markUpdated();
    if(!pending){try{const stored=JSON.parse(sessionStorage.getItem(pendingKey()));if(stored&&typeof stored.key==='string'&&Array.isArray(stored.items))pending=stored;}catch{}}
    render();
   }catch(e){
@@ -137,5 +148,5 @@
  });
  document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!busy)refresh();});
  window.addEventListener('online',()=>refresh());window.addEventListener('offline',()=>{online=false;connection.className='connection offline';connection.textContent='Sem conexão · os pedidos enviados continuam salvos';render();});
- refresh();timer=setInterval(()=>{if(!document.hidden&&!busy&&(data||online))refresh();},5000);
+ refresh();timer=setInterval(poll,5000);
 })();

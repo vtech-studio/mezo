@@ -66,7 +66,10 @@ func loadConfig() (Config, error) {
 	return c, nil
 }
 
-type Tenant struct{ ID, Slug, Name, DBName, DBRole, DBSecret, Status string }
+type Tenant struct {
+	ID, Slug, Name, DBName, DBRole, DBSecret, Status string
+	Revision                                         int64
+}
 type cachedPool struct {
 	pool *pgxpool.Pool
 	refs int
@@ -277,7 +280,7 @@ func (a *App) close() {
 }
 func (a *App) tenant(ctx context.Context, slug string) (Tenant, error) {
 	var t Tenant
-	err := a.control.QueryRow(ctx, "SELECT id,slug,name,db_name,db_role,db_secret,status FROM tenants WHERE slug=$1 AND status='active'", slug).Scan(&t.ID, &t.Slug, &t.Name, &t.DBName, &t.DBRole, &t.DBSecret, &t.Status)
+	err := a.control.QueryRow(ctx, "SELECT id,slug,name,db_name,db_role,db_secret,status,revision FROM tenants WHERE slug=$1 AND status='active'", slug).Scan(&t.ID, &t.Slug, &t.Name, &t.DBName, &t.DBRole, &t.DBSecret, &t.Status, &t.Revision)
 	return t, err
 }
 func (a *App) listTenants(ctx context.Context) ([]Tenant, error) {
