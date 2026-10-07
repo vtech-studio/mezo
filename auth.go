@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -41,8 +42,7 @@ func (a *App) limitLogin(c echo.Context, scope, email string) error {
 		if limit.perAddress {
 			address = c.RealIP()
 		}
-		var attempts, remaining int
-		err := a.control.QueryRow(c.Request().Context(), `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+interval '15 minutes') ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<=now() THEN 1 ELSE LEAST(login_attempts.attempts+1,$2) END,reset_at=CASE WHEN login_attempts.reset_at<=now() THEN now()+interval '15 minutes' ELSE login_attempts.reset_at END RETURNING attempts,GREATEST(1,ceil(extract(epoch FROM (reset_at-now()))))::int`, a.loginKey(scope, email, address), limit.max+1).Scan(&attempts, &remaining)
+		attempts, remaining, err := a.countAttempt(c.Request().Context(), a.loginKey(scope, email, address), limit.max, "15 minutes")
 		if err != nil {
 			return err
 		}
@@ -52,6 +52,13 @@ func (a *App) limitLogin(c echo.Context, scope, email string) error {
 		}
 	}
 	return nil
+}
+
+// countAttempt records an attempt under key and returns the attempts in the current
+// window, kept just above limit, and the seconds left in that window.
+func (a *App) countAttempt(ctx context.Context, key string, limit int, window string) (attempts, remaining int, err error) {
+	err = a.control.QueryRow(ctx, `INSERT INTO login_attempts(key,attempts,reset_at) VALUES($1,1,now()+$3::interval) ON CONFLICT(key) DO UPDATE SET attempts=CASE WHEN login_attempts.reset_at<=now() THEN 1 ELSE LEAST(login_attempts.attempts+1,$2) END,reset_at=CASE WHEN login_attempts.reset_at<=now() THEN now()+$3::interval ELSE login_attempts.reset_at END RETURNING attempts,GREATEST(1,ceil(extract(epoch FROM (reset_at-now()))))::int`, key, limit+1, window).Scan(&attempts, &remaining)
+	return attempts, remaining, err
 }
 
 // loginKey identifies an account, or an account from one address.
@@ -200,22 +207,8 @@ func (a *App) staffAccess(c echo.Context, mutation bool, roles ...string) (Acces
 	return Access{}, echo.NewHTTPError(403, "Sua função não permite esta operação")
 }
 func (a *App) enterTable(c echo.Context) error {
-	t, err := a.tenant(c.Request().Context(), c.Param("slug"))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return echo.ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	p, release, err := a.lease(c.Request().Context(), t)
-	if err != nil {
-		return err
-	}
-	defer release()
-	var id string
-	var code *string // tables opened before codes existed have none
-	err = p.QueryRow(c.Request().Context(), "SELECT s.id,s.code FROM dining_tables d JOIN table_sessions s ON s.table_number=d.number AND s.closed_at IS NULL WHERE d.qr_token=$1", c.Param("token")).Scan(&id, &code)
-	if errors.Is(err, pgx.ErrNoRows) {
+	t, id, code, err := a.tableAtQR(c)
+	if errors.Is(err, errTableClosed) {
 		return tableUnavailable(c)
 	}
 	if err != nil {
