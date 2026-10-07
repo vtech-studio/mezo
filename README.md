@@ -38,7 +38,7 @@ O catálogo e as permissões são criados pelo provisionador configurado em DATA
 
 ## Fluxos funcionando
 
-- Cliente entra por `/r/<restaurante>/m/<token-aleatorio-da-mesa>`, a mesma URL usada no QR code e etiqueta NFC. A equipe abre e encerra as sessões da mesa.
+- Cliente entra por `/r/<restaurante>/m/<token-aleatorio-da-mesa>`, a mesma URL usada no QR code e etiqueta NFC. A equipe abre e encerra as sessões da mesa. As mesas de um restaurante novo começam fechadas: a placa só leva a uma conta depois que a equipe abre a mesa.
 - Garçom entra por `/r/<restaurante>/garcom`; cozinha por `/r/<restaurante>/cozinha`. `/equipe` redireciona ao salão. Cada pessoa usa seu próprio login, limitado ao restaurante e à função; o responsável acessa ambas as áreas.
 - Chamados ficam no banco, entram na fila por idade e atualizam a interface via SSE. Todos os chamados ativos são retornados junto dos 100 atendimentos encerrados mais recentes. Apenas um atendente consegue assumir cada chamado e somente ele pode concluí-lo. Chamados ativos repetidos do mesmo motivo não são duplicados.
 - O cliente escolhe itens, quantidades e observações no próprio celular, revisa e confirma. Uma única transação lança o pedido na conta da sua mesa e na fila da cozinha. O servidor valida o preço revisado e rejeita alterações de preço ou itens indisponíveis. O garçom também pode registrar um pedido para ajudar o cliente. A cozinha assume o preparo e marca como pronto; o garçom confirma a entrega. O mesmo identificador de envio não duplica pedido ou consumo, inclusive em reenvios simultâneos. Pedidos de clientes são limitados a 12 por minuto por sessão de mesa. Preços e nomes ficam salvos no pedido e na conta, mesmo após alterações no cardápio.
