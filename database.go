@@ -71,9 +71,11 @@ type Tenant struct {
 	Revision                                         int64
 }
 type cachedPool struct {
-	pool *pgxpool.Pool
-	refs int
-	used time.Time
+	pool  *pgxpool.Pool
+	refs  int
+	used  time.Time
+	ready chan struct{} // closed once pool or err is set
+	err   error
 }
 type App struct {
 	cfg            Config
@@ -82,6 +84,7 @@ type App struct {
 	mu             sync.Mutex
 	pools          map[string]*cachedPool
 	hub            *Hub
+	openPool       func(context.Context, Tenant) (*pgxpool.Pool, error) // tests replace the restaurant connection
 }
 
 func randomID() string {
@@ -178,6 +181,11 @@ func migrate(ctx context.Context, cfg *pgx.ConnConfig, kind string) error {
 	if err != nil {
 		return err
 	}
+	// Most starts find nothing to apply. Checking does not take the lock, whose
+	// retry interval would otherwise delay concurrent cold starts by a second.
+	if pending, err := p.HasPending(ctx); err == nil && !pending {
+		return nil
+	}
 	_, err = p.Up(ctx)
 	return err
 }
@@ -211,36 +219,21 @@ func newApp(ctx context.Context, cfg Config) (*App, error) {
 	if err = lock.QueryRow(ctx, "SELECT current_user").Scan(&a.adminRole); err != nil {
 		return nil, err
 	}
-	if _, err = lock.Exec(ctx, "SELECT pg_advisory_lock(74829101)"); err != nil {
-		return nil, err
-	}
-	defer lock.Exec(context.Background(), "SELECT pg_advisory_unlock(74829101)")
 	passHash := sha256.Sum256([]byte(cfg.Secret + "/mezo-control"))
 	password := hex.EncodeToString(passHash[:])
-	var exists bool
-	if err = lock.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='mezo_control_app')").Scan(&exists); err != nil {
+	// After the first start the central role, database and grants already exist:
+	// skip the cross-instance lock and the DDL on every cold start.
+	var ready bool
+	if err = lock.QueryRow(ctx, `SELECT CASE WHEN EXISTS(SELECT 1 FROM pg_database WHERE datname='mezo_control') THEN
+ NOT has_database_privilege('public','mezo_control','CONNECT') AND EXISTS(SELECT 1 FROM pg_auth_members m JOIN pg_roles r ON r.oid=m.roleid
+ WHERE r.rolname='mezo_control_app' AND m.member=(SELECT oid FROM pg_roles WHERE rolname=current_user) AND m.inherit_option AND m.set_option)
+ ELSE false END`).Scan(&ready); err != nil {
 		return nil, err
 	}
-	if !exists {
-		if _, err = lock.Exec(ctx, "CREATE ROLE mezo_control_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '"+password+"'"); err != nil {
+	if !ready {
+		if err = a.prepareControl(ctx, lock, password); err != nil {
 			return nil, err
 		}
-	}
-	// PostgreSQL 16+ requires SET membership to assign database ownership. INHERIT
-	// also lets a CREATEDB/CREATEROLE provisioner revoke PUBLIC database access.
-	if _, err = lock.Exec(ctx, "GRANT mezo_control_app TO "+pgx.Identifier{a.adminRole}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
-		return nil, err
-	}
-	if err = lock.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname='mezo_control')").Scan(&exists); err != nil {
-		return nil, err
-	}
-	if !exists {
-		if _, err = lock.Exec(ctx, "CREATE DATABASE mezo_control OWNER mezo_control_app"); err != nil {
-			return nil, err
-		}
-	}
-	if _, err = lock.Exec(ctx, "REVOKE CONNECT ON DATABASE mezo_control FROM PUBLIC"); err != nil {
-		return nil, err
 	}
 	poolCfg, err := a.connection("mezo_control", "mezo_control_app", password)
 	if err != nil {
@@ -253,23 +246,64 @@ func newApp(ctx context.Context, cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
-	if err != nil {
+	// The initial account is created once; hashing on every cold start only costs time.
+	var adminExists bool
+	if err = a.control.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM administrators WHERE email=$1)", cfg.AdminEmail).Scan(&adminExists); err != nil {
 		return nil, err
 	}
-	if _, err = a.control.Exec(ctx, "INSERT INTO administrators(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING", cfg.AdminEmail, string(hash)); err != nil {
-		return nil, err
+	if !adminExists {
+		hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = a.control.Exec(ctx, "INSERT INTO administrators(email,password_hash) VALUES($1,$2) ON CONFLICT(email) DO NOTHING", cfg.AdminEmail, string(hash)); err != nil {
+			return nil, err
+		}
 	}
 	_, _ = a.control.Exec(ctx, "DELETE FROM auth_sessions WHERE expires_at<now()")
 	_, _ = a.control.Exec(ctx, "DELETE FROM login_attempts WHERE reset_at<now()")
 	failed = false
 	return a, nil
 }
+
+// prepareControl creates the central role and database, serialized across instances.
+func (a *App) prepareControl(ctx context.Context, conn *pgxpool.Conn, password string) error {
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(74829101)"); err != nil {
+		return err
+	}
+	defer conn.Exec(context.Background(), "SELECT pg_advisory_unlock(74829101)")
+	var exists bool
+	if err := conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='mezo_control_app')").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := conn.Exec(ctx, "CREATE ROLE mezo_control_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '"+password+"'"); err != nil {
+			return err
+		}
+	}
+	// PostgreSQL 16+ requires SET membership to assign database ownership. INHERIT
+	// also lets a CREATEDB/CREATEROLE provisioner revoke PUBLIC database access.
+	if _, err := conn.Exec(ctx, "GRANT mezo_control_app TO "+pgx.Identifier{a.adminRole}.Sanitize()+" WITH INHERIT TRUE, SET TRUE"); err != nil {
+		return err
+	}
+	if err := conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname='mezo_control')").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := conn.Exec(ctx, "CREATE DATABASE mezo_control OWNER mezo_control_app"); err != nil {
+			return err
+		}
+	}
+	_, err := conn.Exec(ctx, "REVOKE CONNECT ON DATABASE mezo_control FROM PUBLIC")
+	return err
+}
 func (a *App) close() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, p := range a.pools {
-		p.pool.Close()
+		if p.pool != nil {
+			p.pool.Close()
+		}
 	}
 	if a.control != nil {
 		a.control.Close()
@@ -301,9 +335,10 @@ func (a *App) listTenants(ctx context.Context) ([]Tenant, error) {
 }
 func (a *App) lease(ctx context.Context, t Tenant) (*pgxpool.Pool, func(), error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	entry := a.pools[t.ID]
-	if entry == nil {
+	var evicted *pgxpool.Pool
+	opening := entry == nil
+	if opening {
 		if len(a.pools) >= 16 {
 			var oldestID string
 			var oldest time.Time
@@ -314,35 +349,71 @@ func (a *App) lease(ctx context.Context, t Tenant) (*pgxpool.Pool, func(), error
 				}
 			}
 			if oldestID == "" {
+				a.mu.Unlock()
 				return nil, nil, errors.New("capacidade de conexões atingida")
 			}
-			a.pools[oldestID].pool.Close()
+			evicted = a.pools[oldestID].pool
 			delete(a.pools, oldestID)
 		}
-		password, err := a.crypt(t.DBSecret, false)
-		if err != nil {
-			return nil, nil, err
-		}
-		cfg, err := a.connection(t.DBName, t.DBRole, password)
-		if err != nil {
-			return nil, nil, err
-		}
-		// Migrate only the restaurant being accessed; coordinate concurrent instances.
-		if err = migrate(ctx, cfg.ConnConfig, "tenant"); err != nil {
-			return nil, nil, fmt.Errorf("migração de %s: %w", t.Slug, err)
-		}
-		pool, err := pgxpool.NewWithConfig(ctx, cfg)
-		if err != nil {
-			return nil, nil, err
-		}
-		entry = &cachedPool{pool: pool}
+		entry = &cachedPool{ready: make(chan struct{})}
 		a.pools[t.ID] = entry
 	}
 	entry.refs++
-	entry.used = time.Now()
+	a.mu.Unlock()
 	var once sync.Once
 	release := func() { once.Do(func() { a.mu.Lock(); entry.refs--; entry.used = time.Now(); a.mu.Unlock() }) }
+	if evicted != nil {
+		go evicted.Close()
+	}
+	if opening {
+		// Connect and migrate outside the global lock, so a slow restaurant
+		// database never holds requests for the others. Concurrent requests
+		// for the same restaurant wait for this single attempt.
+		open := a.openPool
+		if open == nil {
+			open = a.openTenant
+		}
+		pool, err := open(ctx, t)
+		a.mu.Lock()
+		entry.pool, entry.err = pool, err
+		if err != nil && a.pools[t.ID] == entry {
+			delete(a.pools, t.ID) // the next access tries again
+		}
+		a.mu.Unlock()
+		close(entry.ready)
+	}
+	select {
+	case <-entry.ready:
+	case <-ctx.Done():
+		release()
+		return nil, nil, ctx.Err()
+	}
+	if entry.err != nil {
+		release()
+		return nil, nil, entry.err
+	}
 	return entry.pool, release, nil
+}
+
+// openTenant connects to one restaurant database after applying its pending
+// migrations. It outlives the request that triggered it, so a client giving up
+// does not fail the other requests waiting for the same restaurant.
+func (a *App) openTenant(ctx context.Context, t Tenant) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	password, err := a.crypt(t.DBSecret, false)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := a.connection(t.DBName, t.DBRole, password)
+	if err != nil {
+		return nil, err
+	}
+	// Migrate only the restaurant being accessed; coordinate concurrent instances.
+	if err = migrate(ctx, cfg.ConnConfig, "tenant"); err != nil {
+		return nil, fmt.Errorf("migração de %s: %w", t.Slug, err)
+	}
+	return pgxpool.NewWithConfig(ctx, cfg)
 }
 func (a *App) provision(ctx context.Context, slug, name, email, staffName, password string, tables int) (Tenant, error) {
 	t := Tenant{ID: randomID(), Slug: slug, Name: name, Status: "provisioning"}
