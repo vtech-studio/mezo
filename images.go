@@ -142,6 +142,10 @@ func (a *App) mediaAccess(c echo.Context, mutation bool) (Tenant, *pgxpool.Pool,
 func (a *App) uploadImage(c echo.Context) error {
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, maxImageBytes+64*1024)
 	defer func() {
+		// Vercel forwards multipart requests to the Go process. Drain the bounded
+		// body on early auth failures so its proxy can finish writing and receive
+		// the 401/403 response, instead of a broken-pipe 502.
+		_, _ = io.Copy(io.Discard, c.Request().Body)
 		if c.Request().MultipartForm != nil {
 			_ = c.Request().MultipartForm.RemoveAll()
 		}
