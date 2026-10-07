@@ -86,7 +86,7 @@ Importe o repositório GitHub e configure estas variáveis no ambiente de produ�
 | `APP_ORIGIN` | Origem HTTPS exata e estável da produção, sem caminho |
 | `SEED_DEMO` | `false` para começar sem restaurante fictício |
 
-Guarde credenciais como variáveis sensíveis. Para uma demonstração com Casa do Sol, use `SEED_DEMO=true` e defina também `DEMO_STAFF_PASSWORD`; são dados fictícios. A alteração de `ADMIN_PASSWORD` não redefine uma conta já criada. Não compartilhe o banco de produção com deploys de prévia: use outro projeto PostgreSQL e outros segredos para testar mudanças.
+Guarde credenciais como variáveis sensíveis. Para uma demonstração com Casa do Sol, use `SEED_DEMO=true` e defina também `DEMO_STAFF_PASSWORD`; são dados fictícios. A alteração de `ADMIN_PASSWORD` não redefine uma conta já criada. Não compartilhe o banco de produção com deploys de prévia: use outro projeto PostgreSQL e outros segredos para testar mudanças. Por isso, um deploy com `VERCEL_ENV` diferente de `production` não inicia, mesmo que receba as variáveis de produção. Para usar prévias, configure no ambiente Preview um banco separado e `MEZO_ALLOW_PREVIEW=true`.
 
 Na Vercel, a interface consulta o banco a cada cinco segundos enquanto a página está visível. Isso permite receber chamados entre diferentes instâncias de execução. O modo local continua usando SSE. As conexões ficam em pools por instância; dimensione o limite do PostgreSQL considerando o número de instâncias, restaurantes ativos e conexões administrativas.
 
