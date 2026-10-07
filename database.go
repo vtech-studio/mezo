@@ -396,11 +396,9 @@ func (a *App) provision(ctx context.Context, slug, name, email, staffName, passw
 	if _, err = tx.Exec(ctx, "INSERT INTO staff(id,name,email,password_hash,role) VALUES($1,$2,$3,$4,'manager')", randomID(), staffName, strings.ToLower(email), string(hash)); err != nil {
 		return t, err
 	}
+	// Tables start closed: a printed QR only reaches a bill after the team opens the table.
 	for n := 1; n <= tables; n++ {
 		if _, err = tx.Exec(ctx, "INSERT INTO dining_tables(number,qr_token) VALUES($1,$2)", n, randomID()); err != nil {
-			return t, err
-		}
-		if _, err = tx.Exec(ctx, "INSERT INTO table_sessions(id,table_number) VALUES($1,$2)", randomID(), n); err != nil {
 			return t, err
 		}
 	}

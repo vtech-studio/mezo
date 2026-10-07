@@ -207,7 +207,7 @@ func (a *App) createRestaurant(c echo.Context) error {
 		}
 		return err
 	}
-	return adminOK(c, "Restaurante cadastrado com banco próprio. O cardápio começa vazio; cadastre os itens abaixo.")
+	return adminOK(c, "Restaurante cadastrado com banco próprio. O cardápio começa vazio; cadastre os itens abaixo. As mesas começam fechadas: a equipe abre cada uma ao receber os clientes.")
 }
 func (a *App) createStaff(c echo.Context) error {
 	if _, err := a.session(c, "admin", "", true); err != nil {

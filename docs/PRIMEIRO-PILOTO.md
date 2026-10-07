@@ -8,7 +8,7 @@ Atualizado em 06/10/2026. Esta versão permite atendimento pelo QR/NFC, pedido c
 2. Cadastre os itens e confira seus preços em reais. O campo posiciona a vírgula automaticamente: digitar 3800 mostra R$ 38,00. Desative um item quando acabar; pedidos anteriores preservam o preço registrado.
 3. Crie um acesso individual para cada garçom e cada pessoa da cozinha. Escolha a função correta. O responsável opera as duas áreas e pode cancelar pedidos com justificativa. Peça a troca da senha inicial pelo menu “Seu acesso”.
 4. Abra o link “Garçom” e o link “Cozinha” em celulares diferentes. A cozinha também funciona em tablet/computador. Mantenha a tela aberta e a conexão disponível durante o serviço; a atualização na Vercel ocorre a cada cinco segundos. Não há push com o aplicativo fechado.
-5. Baixe o QR de cada mesa pelo painel. Grave essa mesma URL na etiqueta NFC. Teste no celular antes de imprimir as placas. O QR da demonstração antiga não identifica um restaurante real.
+5. Baixe o QR de cada mesa pelo painel. Grave essa mesma URL na etiqueta NFC. As mesas começam fechadas: abra a mesa na área do garçom antes de testar a placa no celular, e teste antes de imprimir as placas. O QR da demonstração antiga não identifica um restaurante real.
 6. Simule uma rodada completa: cliente escolhe quantidade e observação → revisa e confirma → conta atualizada e pedido na cozinha → preparo → pronto → entrega → conferência da conta → recebimento presencial → mesa encerrada → nova abertura sem consumo anterior.
 7. Confira recebimentos pelo menu do responsável e exporte CSV. Compare os registros de Pix com o banco, cartão com a maquininha e dinheiro com o caixa. O registro do Mezô é uma confirmação da equipe; não liquida pagamentos nem emite documento fiscal.
 

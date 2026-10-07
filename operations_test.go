@@ -246,6 +246,7 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	}
 	expect(request("GET", base+"/tables/1/bill", nil, chefs[0].cookie, ""), 403)
 	expect(request("GET", "/api/r/"+other.Slug+"/operations?view=kitchen", nil, chefs[0].cookie, ""), 401)
+	expect(request("POST", base+"/tables/1/open", map[string]any{}, waiter.cookie, waiter.csrf), 201)
 	w := request("GET", "/r/"+tenant.Slug+"/m/"+token, nil, nil, "")
 	expect(w, 200)
 	customer := w.Result().Cookies()[0]
@@ -495,6 +496,7 @@ func TestKitchenWaiterOrdersAndSettlement(t *testing.T) {
 	expect(request("POST", base+"/orders/"+customerOrder+"/ready", map[string]any{}, chefs[0].cookie, chefs[0].csrf), 200)
 	expect(request("POST", base+"/orders/"+customerOrder+"/deliver", map[string]any{}, manager.cookie, manager.csrf), 200)
 	// A long history at another table must not hide this table's delivered orders.
+	expect(request("POST", base+"/tables/2/open", map[string]any{}, manager.cookie, manager.csrf), 201)
 	if _, err = p.Exec(ctx, `INSERT INTO orders(id,session_id,customer_session_id,request_key,request_hash,status,updated_at)
  SELECT 'history-fixture-'||n::text,s.id,s.id,'history-fixture-'||n::text,'fixture','delivered',now()+interval '1 minute'
  FROM generate_series(1,120) n,table_sessions s WHERE s.table_number=2 AND s.closed_at IS NULL`); err != nil {

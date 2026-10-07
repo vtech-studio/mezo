@@ -148,6 +148,9 @@ func TestPostgresIsolationAndRestaurantFlow(t *testing.T) {
 	staff2, csrf2 := login(ta, "a2@example.test")
 	expect(request("GET", "/api/r/"+tb.Slug+"/bootstrap?role=staff", nil, staff1, ""), 401)
 	expect(request("POST", "/api/r/"+tb.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1), 401)
+	// New restaurants start with closed tables: the printed QR reaches no bill yet.
+	expect(request("GET", "/r/"+ta.Slug+"/m/"+token, nil, nil, ""), 410)
+	expect(request("POST", "/api/r/"+ta.Slug+"/tables/1/open", map[string]any{}, staff1, csrf1), 201)
 	pw, err := a.crypt(ta.DBSecret, false)
 	if err != nil {
 		t.Fatal(err)
